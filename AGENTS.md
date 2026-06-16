@@ -17,11 +17,30 @@ changes.
 
 ## GitHub Workflow
 
-- Treat `aeltawela/filebrowser` as the working GitHub repository for this fork.
+- Treat `origin` as the working GitHub repository for this fork.
 - Use `origin` for pushes, feature branches, issues, and pull requests.
 - Keep `filebrowser/filebrowser` as the upstream sync source only. Do not open
   pull requests against upstream unless the user explicitly asks for that target.
 - Keep feature work in separate branches and separate pull requests.
+- Merge pull requests with a squash merge so each PR lands as one commit on the
+  target branch, unless the user explicitly asks for a different merge method.
+
+## Privacy and Handoff Notes
+
+- Do not include personal details about the requester, local machine, local
+  filesystem, or local development environment in code comments, docs, commit
+  messages, pull request descriptions, or final handoffs.
+- Avoid local usernames, home-directory paths, absolute workspace paths,
+  machine models, CPU names, OS/architecture labels from the agent host,
+  timezone/location details, and screenshots or logs that reveal those values.
+- Use generic deployment wording. For constrained hardware, prefer terms such as
+  "low-resource PC", "small server", or "constrained device" instead of naming
+  a specific board or personal device model.
+- If a benchmark is useful, report the command and relative result shape without
+  attaching host-identifying details. If hardware context is necessary, describe
+  it generically, such as "local development machine" or "low-resource target".
+- Repository owner names may appear only where required for GitHub operations;
+  prefer `origin`, branch names, or pull request numbers in human-facing text.
 
 ## Development Commands
 
