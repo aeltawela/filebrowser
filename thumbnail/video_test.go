@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVideoThumbnailUnavailable(t *testing.T) {
@@ -44,10 +45,25 @@ func TestVideoThumbnailUsesFfmpegOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotArgs := string(args)
-	for _, want := range []string{"-nostdin", "-ss", "1.250", "-frames:v", "1", "pipe:1"} {
+	for _, want := range []string{"-nostdin", "-threads", "1", "-ss", "1.250", "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "pipe:1"} {
 		if !strings.Contains(gotArgs, want) {
 			t.Fatalf("expected ffmpeg args to contain %q, got:\n%s", want, gotArgs)
 		}
+	}
+}
+
+func TestVideoThumbnailTimesOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell test helper is unix-only")
+	}
+
+	dir := t.TempDir()
+	ffprobe := writeScript(t, dir, "ffprobe", "printf '12.5\\n'\n")
+	ffmpeg := writeScript(t, dir, "ffmpeg", "sleep 2\nprintf 'jpeg-bytes'\n")
+
+	err := NewVideoWithLimits(ffmpeg, ffprobe, 1, 10*time.Millisecond).Thumbnail(context.Background(), filepath.Join(dir, "video.mp4"), &bytes.Buffer{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 }
 

@@ -213,6 +213,32 @@ func TestReadListingSkipsInaccessibleChildren(t *testing.T) {
 	}
 }
 
+func TestVideoExtensionsFromMediaArchives(t *testing.T) {
+	for _, ext := range []string{".avi", ".flv", ".mp4", ".mpg", ".wmv"} {
+		t.Run(ext, func(t *testing.T) {
+			memFs := afero.NewMemMapFs()
+			filename := "/movie" + ext
+			if err := afero.WriteFile(memFs, filename, []byte("video"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			file, err := NewFileInfo(&FileOptions{
+				Fs:      memFs,
+				Path:    filename,
+				Expand:  true,
+				Checker: allowAllChecker{},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if file.Type != "video" {
+				t.Fatalf("expected %s to be detected as video, got %q", ext, file.Type)
+			}
+		})
+	}
+}
+
 func TestFileInfoRealPathUsesScopedFsRealPath(t *testing.T) {
 	root := t.TempDir()
 	file := &FileInfo{

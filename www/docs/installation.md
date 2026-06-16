@@ -86,6 +86,10 @@ Video thumbnails are generated when thumbnails are enabled and both `ffmpeg`
 and `ffprobe` are available. The Docker images include these tools, so video
 thumbnails work without adding packages to the container.
 
+Thumbnail generation is cached and limited to one video process at a time by
+default. This keeps folder browsing responsive on constrained devices while
+still generating thumbnails on demand.
+
 For Docker-based setups, keep thumbnails enabled and mount persistent
 configuration, database, and file volumes. Named volumes work well for
 File Browser's own state:
