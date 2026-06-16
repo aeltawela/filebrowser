@@ -204,6 +204,82 @@ func TestSearchLoadsPersistentIndex(t *testing.T) {
 	}
 }
 
+func TestSearchFallsBackToCatalogWhenTrigramLimitExceeded(t *testing.T) {
+	withTrigramPostingsLimit(t, 2)
+
+	fs := afero.NewMemMapFs()
+	mustWriteFile(t, fs, "/docs/alpha-match.txt")
+	mustWriteFile(t, fs, "/docs/beta.txt")
+	checker := keyedChecker{key: "allow-all", check: func(string) bool { return true }}
+
+	cache := newIndexCache()
+	index, ok, err := cache.get(context.Background(), fs, "/", checker)
+	if err != nil || !ok {
+		t.Fatalf("cache.get() = (%v, %v), want indexed result", ok, err)
+	}
+	if index.trigramsComplete {
+		t.Fatalf("index.trigramsComplete = true, want false after posting cap")
+	}
+	if index.trigrams != nil {
+		t.Fatalf("index.trigrams retained after posting cap")
+	}
+
+	got := collectIndexedSearch(t, index, "match", checker)
+	want := []string{"docs/alpha-match.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalog search = %v, want %v", got, want)
+	}
+}
+
+func TestSearchLoadsPersistentIndexWithoutTrigrams(t *testing.T) {
+	withTrigramPostingsLimit(t, 2)
+
+	root := t.TempDir()
+	indexDir := t.TempDir()
+	checker := keyedChecker{key: "allow-all", check: func(string) bool { return true }}
+
+	fs := &trackingFs{Fs: files.NewScopedFs(afero.NewOsFs(), root)}
+	mustWriteFile(t, fs, "/docs/alpha-match.txt")
+	mustWriteFile(t, fs, "/docs/beta.txt")
+
+	cache := newIndexCache()
+	if err := cache.setPersistentDir(indexDir); err != nil {
+		t.Fatalf("setPersistentDir() error = %v", err)
+	}
+	index, ok, err := cache.get(context.Background(), fs, "/", checker)
+	if err != nil || !ok {
+		t.Fatalf("cache.get() = (%v, %v), want indexed result", ok, err)
+	}
+	if index.trigramsComplete {
+		t.Fatalf("index.trigramsComplete = true, want false after posting cap")
+	}
+
+	reloadedFs := &trackingFs{Fs: files.NewScopedFs(afero.NewOsFs(), root)}
+	reloaded := newIndexCache()
+	if err := reloaded.setPersistentDir(indexDir); err != nil {
+		t.Fatalf("setPersistentDir() error = %v", err)
+	}
+	index, ok, err = reloaded.get(context.Background(), reloadedFs, "/", checker)
+	if err != nil || !ok {
+		t.Fatalf("reloaded cache.get() = (%v, %v), want persisted index", ok, err)
+	}
+	if index.trigramsComplete {
+		t.Fatalf("persisted index trigramsComplete = true, want false")
+	}
+	if index.trigrams != nil {
+		t.Fatalf("persisted index retained incomplete trigrams")
+	}
+	if len(reloadedFs.opened) != 0 {
+		t.Fatalf("persistent index load opened filesystem paths: %v", reloadedFs.opened)
+	}
+
+	got := collectIndexedSearch(t, index, "match", checker)
+	want := []string{"docs/alpha-match.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("persisted catalog search = %v, want %v", got, want)
+	}
+}
+
 func BenchmarkSearchLargeTree(b *testing.B) {
 	fs := afero.NewMemMapFs()
 	checker := keyedChecker{key: "benchmark", check: func(string) bool { return true }}
@@ -265,6 +341,16 @@ func collectIndexedSearch(t *testing.T, index *searchIndex, query string, checke
 
 	sort.Strings(got)
 	return got
+}
+
+func withTrigramPostingsLimit(t *testing.T, limit int) {
+	t.Helper()
+
+	previous := trigramPostingsLimit
+	trigramPostingsLimit = limit
+	t.Cleanup(func() {
+		trigramPostingsLimit = previous
+	})
 }
 
 func mustWriteFile(t *testing.T, fs afero.Fs, name string) {

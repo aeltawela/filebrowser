@@ -103,11 +103,11 @@ func (s *searchOptions) matches(fPath string) bool {
 	return false
 }
 
-func (s *searchOptions) matchesEntry(entry indexedEntry) bool {
+func (s *searchOptions) matchesEntry(entryPath string, entry indexedEntry) bool {
 	if len(s.Conditions) > 0 {
 		match := false
 		for _, condition := range s.Conditions {
-			if condition(entry.path) {
+			if condition(entryPath) {
 				match = true
 				break
 			}
@@ -122,7 +122,7 @@ func (s *searchOptions) matchesEntry(entry indexedEntry) bool {
 		return true
 	}
 
-	fileName := entry.name
+	fileName := entry.info.name
 	if !s.CaseSensitive {
 		fileName = entry.lowerName
 	}

@@ -20,12 +20,15 @@ import (
 )
 
 const (
-	indexMaxAge             = 30 * 24 * time.Hour
-	indexValidationInterval = time.Minute
-	indexVersion            = 2
+	indexMaxAge                 = 30 * 24 * time.Hour
+	indexValidationInterval     = time.Minute
+	indexVersion                = 3
+	defaultTrigramPostingsLimit = 4_000_000
 )
 
 var defaultIndexes = newIndexCache()
+
+var trigramPostingsLimit = defaultTrigramPostingsLimit
 
 type realPathFs interface {
 	RealPath(string) (string, error)
@@ -55,12 +58,13 @@ type indexEntry struct {
 }
 
 type searchIndex struct {
-	scope       string
-	created     time.Time
-	directories []indexedDirectory
-	entries     []indexedEntry
-	all         []uint32
-	trigrams    map[trigram][]uint32
+	scope            string
+	created          time.Time
+	directories      []indexedDirectory
+	entries          []indexedEntry
+	trigrams         map[trigram][]uint32
+	trigramsComplete bool
+	trigramPostings  int
 }
 
 type indexedDirectory struct {
@@ -70,22 +74,21 @@ type indexedDirectory struct {
 }
 
 type indexedEntry struct {
-	path         string
 	relativePath string
-	name         string
 	lowerName    string
-	info         os.FileInfo
+	info         indexedFileInfo
 }
 
 type trigram [3]byte
 
 type persistedIndex struct {
-	Version  int
-	Scope    string
-	Created  time.Time
-	Dirs     []persistedDirectory
-	Entries  []persistedEntry
-	Trigrams map[trigram][]uint32
+	Version          int
+	Scope            string
+	Created          time.Time
+	Dirs             []persistedDirectory
+	Entries          []persistedEntry
+	Trigrams         map[trigram][]uint32
+	TrigramsComplete bool
 }
 
 type persistedDirectory struct {
@@ -95,17 +98,14 @@ type persistedDirectory struct {
 }
 
 type persistedEntry struct {
-	Path         string
 	RelativePath string
-	Name         string
-	LowerName    string
 	Size         int64
 	Mode         os.FileMode
 	ModTime      time.Time
 	IsDir        bool
 }
 
-type persistedFileInfo struct {
+type indexedFileInfo struct {
 	name    string
 	size    int64
 	mode    os.FileMode
@@ -320,12 +320,12 @@ func hashString(value string) string {
 
 func buildSearchIndex(ctx context.Context, fs afero.Fs, scope string, checker rules.Checker) (*searchIndex, error) {
 	index := &searchIndex{
-		scope:       scope,
-		created:     time.Now(),
-		directories: []indexedDirectory{},
-		entries:     []indexedEntry{},
-		all:         []uint32{},
-		trigrams:    map[trigram][]uint32{},
+		scope:            scope,
+		created:          time.Now(),
+		directories:      []indexedDirectory{},
+		entries:          []indexedEntry{},
+		trigrams:         map[trigram][]uint32{},
+		trigramsComplete: true,
 	}
 
 	err := walkUnsorted(ctx, fs, scope, func(fPath string, info os.FileInfo, err error) error {
@@ -353,16 +353,13 @@ func buildSearchIndex(ctx context.Context, fs afero.Fs, scope string, checker ru
 
 		id := uint32(len(index.entries))
 		name := info.Name()
-		lowerName := strings.ToLower(name)
+		relative := strings.Clone(relativePath(scope, fPath))
 		index.entries = append(index.entries, indexedEntry{
-			path:         fPath,
-			relativePath: relativePath(scope, fPath),
-			name:         name,
-			lowerName:    lowerName,
-			info:         info,
+			relativePath: relative,
+			lowerName:    lowerSearchName(name),
+			info:         newIndexedFileInfo(info),
 		})
-		index.all = append(index.all, id)
-		index.addTrigrams(id, lowerName)
+		index.addTrigrams(id, index.entries[id].lowerName)
 
 		return nil
 	})
@@ -379,6 +376,25 @@ func (idx *searchIndex) addDirectory(dirPath string, info os.FileInfo) {
 		size:    info.Size(),
 		modTime: info.ModTime(),
 	})
+}
+
+func newIndexedFileInfo(info os.FileInfo) indexedFileInfo {
+	return indexedFileInfo{
+		name:    info.Name(),
+		size:    info.Size(),
+		mode:    info.Mode(),
+		modTime: info.ModTime(),
+		isDir:   info.IsDir(),
+	}
+}
+
+func lowerSearchName(name string) string {
+	lower := strings.ToLower(name)
+	if lower == name {
+		return name
+	}
+
+	return lower
 }
 
 func (idx *searchIndex) valid(ctx context.Context, fs afero.Fs) (bool, error) {
@@ -428,12 +444,12 @@ func loadPersistentIndex(name, scope string) (*searchIndex, bool, error) {
 	}
 
 	index := &searchIndex{
-		scope:       persisted.Scope,
-		created:     persisted.Created,
-		directories: make([]indexedDirectory, 0, len(persisted.Dirs)),
-		entries:     make([]indexedEntry, 0, len(persisted.Entries)),
-		all:         make([]uint32, 0, len(persisted.Entries)),
-		trigrams:    persisted.Trigrams,
+		scope:            persisted.Scope,
+		created:          persisted.Created,
+		directories:      make([]indexedDirectory, 0, len(persisted.Dirs)),
+		entries:          make([]indexedEntry, 0, len(persisted.Entries)),
+		trigrams:         persisted.Trigrams,
+		trigramsComplete: persisted.TrigramsComplete,
 	}
 	for _, dir := range persisted.Dirs {
 		index.directories = append(index.directories, indexedDirectory{
@@ -442,23 +458,21 @@ func loadPersistentIndex(name, scope string) (*searchIndex, bool, error) {
 			modTime: dir.ModTime,
 		})
 	}
-	for i, entry := range persisted.Entries {
+	for _, entry := range persisted.Entries {
+		name := path.Base(entry.RelativePath)
 		index.entries = append(index.entries, indexedEntry{
-			path:         entry.Path,
 			relativePath: entry.RelativePath,
-			name:         entry.Name,
-			lowerName:    entry.LowerName,
-			info: persistedFileInfo{
-				name:    entry.Name,
+			lowerName:    lowerSearchName(name),
+			info: indexedFileInfo{
+				name:    name,
 				size:    entry.Size,
 				mode:    entry.Mode,
 				modTime: entry.ModTime,
 				isDir:   entry.IsDir,
 			},
 		})
-		index.all = append(index.all, uint32(i))
 	}
-	if index.trigrams == nil {
+	if index.trigramsComplete && index.trigrams == nil {
 		index.trigrams = map[trigram][]uint32{}
 		for id, entry := range index.entries {
 			index.addTrigrams(uint32(id), entry.lowerName)
@@ -488,12 +502,15 @@ func savePersistentIndex(name string, index *searchIndex) error {
 	}()
 
 	persisted := persistedIndex{
-		Version:  indexVersion,
-		Scope:    index.scope,
-		Created:  index.created,
-		Dirs:     make([]persistedDirectory, 0, len(index.directories)),
-		Entries:  make([]persistedEntry, 0, len(index.entries)),
-		Trigrams: index.trigrams,
+		Version:          indexVersion,
+		Scope:            index.scope,
+		Created:          index.created,
+		Dirs:             make([]persistedDirectory, 0, len(index.directories)),
+		Entries:          make([]persistedEntry, 0, len(index.entries)),
+		TrigramsComplete: index.trigramsComplete,
+	}
+	if index.trigramsComplete {
+		persisted.Trigrams = index.trigrams
 	}
 	if persisted.Created.IsZero() {
 		persisted.Created = time.Now()
@@ -507,10 +524,7 @@ func savePersistentIndex(name string, index *searchIndex) error {
 	}
 	for _, entry := range index.entries {
 		persisted.Entries = append(persisted.Entries, persistedEntry{
-			Path:         entry.path,
 			RelativePath: entry.relativePath,
-			Name:         entry.name,
-			LowerName:    entry.lowerName,
 			Size:         entry.info.Size(),
 			Mode:         entry.info.Mode(),
 			ModTime:      entry.info.ModTime(),
@@ -534,7 +548,7 @@ func savePersistentIndex(name string, index *searchIndex) error {
 }
 
 func (idx *searchIndex) addTrigrams(id uint32, value string) {
-	if len(value) < 3 {
+	if !idx.trigramsComplete || len(value) < 3 {
 		return
 	}
 
@@ -546,25 +560,31 @@ func (idx *searchIndex) addTrigrams(id uint32, value string) {
 		}
 
 		seen[gram] = struct{}{}
+		if idx.trigramPostings >= trigramPostingsLimit {
+			idx.trigrams = nil
+			idx.trigramsComplete = false
+			idx.trigramPostings = 0
+			return
+		}
 		idx.trigrams[gram] = append(idx.trigrams[gram], id)
+		idx.trigramPostings++
 	}
 }
 
 func (idx *searchIndex) search(ctx context.Context, opts *searchOptions, checker rules.Checker, found func(path string, f os.FileInfo) error) error {
 	allowed := map[string]bool{}
-	for _, id := range idx.candidates(opts) {
-		if ctx.Err() != nil {
-			return context.Cause(ctx)
+	if candidates, ok := idx.candidates(opts); ok {
+		for _, id := range candidates {
+			if err := idx.matchEntry(ctx, opts, checker, allowed, id, found); err != nil {
+				return err
+			}
 		}
 
-		entry := idx.entries[id]
-		if !allowedByChecker(checker, entry.path, allowed) {
-			continue
-		}
-		if !opts.matchesEntry(entry) {
-			continue
-		}
-		if err := found(entry.relativePath, entry.info); err != nil {
+		return nil
+	}
+
+	for id := range idx.entries {
+		if err := idx.matchEntry(ctx, opts, checker, allowed, uint32(id), found); err != nil {
 			return err
 		}
 	}
@@ -572,9 +592,37 @@ func (idx *searchIndex) search(ctx context.Context, opts *searchOptions, checker
 	return nil
 }
 
-func (idx *searchIndex) candidates(opts *searchOptions) []uint32 {
-	if len(opts.Terms) == 0 {
-		return idx.all
+func (idx *searchIndex) matchEntry(
+	ctx context.Context,
+	opts *searchOptions,
+	checker rules.Checker,
+	allowed map[string]bool,
+	id uint32,
+	found func(path string, f os.FileInfo) error,
+) error {
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+
+	entry := idx.entries[id]
+	entryPath := idx.entryPath(entry)
+	if !allowedByChecker(checker, entryPath, allowed) {
+		return nil
+	}
+	if !opts.matchesEntry(entryPath, entry) {
+		return nil
+	}
+
+	return found(entry.relativePath, entry.info)
+}
+
+func (idx *searchIndex) entryPath(entry indexedEntry) string {
+	return path.Join(idx.scope, entry.relativePath)
+}
+
+func (idx *searchIndex) candidates(opts *searchOptions) ([]uint32, bool) {
+	if len(opts.Terms) == 0 || !idx.trigramsComplete {
+		return nil, false
 	}
 
 	var candidates []uint32
@@ -584,7 +632,7 @@ func (idx *searchIndex) candidates(opts *searchOptions) []uint32 {
 			term = strings.ToLower(term)
 		}
 		if len(term) < 3 {
-			return idx.all
+			return nil, false
 		}
 
 		ids := idx.termCandidates(term)
@@ -597,7 +645,7 @@ func (idx *searchIndex) candidates(opts *searchOptions) []uint32 {
 		}
 	}
 
-	return candidates
+	return candidates, true
 }
 
 func (idx *searchIndex) termCandidates(term string) []uint32 {
@@ -635,9 +683,9 @@ func allowedByChecker(checker rules.Checker, p string, cache map[string]bool) bo
 	return allowed
 }
 
-func (i persistedFileInfo) Name() string       { return i.name }
-func (i persistedFileInfo) Size() int64        { return i.size }
-func (i persistedFileInfo) Mode() os.FileMode  { return i.mode }
-func (i persistedFileInfo) ModTime() time.Time { return i.modTime }
-func (i persistedFileInfo) IsDir() bool        { return i.isDir }
-func (i persistedFileInfo) Sys() interface{}   { return nil }
+func (i indexedFileInfo) Name() string       { return i.name }
+func (i indexedFileInfo) Size() int64        { return i.size }
+func (i indexedFileInfo) Mode() os.FileMode  { return i.mode }
+func (i indexedFileInfo) ModTime() time.Time { return i.modTime }
+func (i indexedFileInfo) IsDir() bool        { return i.isDir }
+func (i indexedFileInfo) Sys() interface{}   { return nil }
