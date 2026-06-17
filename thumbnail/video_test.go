@@ -19,6 +19,31 @@ func TestVideoThumbnailUnavailable(t *testing.T) {
 	}
 }
 
+func TestVideoAvailabilityReportsMissingTools(t *testing.T) {
+	tests := []struct {
+		name    string
+		video   *Video
+		missing string
+	}{
+		{name: "nil service", video: nil, missing: "ffmpeg and ffprobe"},
+		{name: "missing ffmpeg", video: NewVideoWithTools("", "/usr/bin/ffprobe"), missing: "ffmpeg"},
+		{name: "missing ffprobe", video: NewVideoWithTools("/usr/bin/ffmpeg", ""), missing: "ffprobe"},
+		{name: "missing both", video: NewVideoWithTools("", ""), missing: "ffmpeg and ffprobe"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.video.Available()
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("expected ErrUnavailable, got %v", err)
+			}
+			if !strings.Contains(err.Error(), test.missing) {
+				t.Fatalf("expected error to mention %q, got %q", test.missing, err)
+			}
+		})
+	}
+}
+
 func TestVideoThumbnailUsesFfmpegOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell test helper is unix-only")

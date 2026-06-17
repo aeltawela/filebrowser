@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -225,6 +226,8 @@ func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Aut
 	fmt.Fprintf(w, "\tTLS Cert:\t%s\n", ser.TLSCert)
 	fmt.Fprintf(w, "\tTLS Key:\t%s\n", ser.TLSKey)
 	fmt.Fprintf(w, "\tToken Expiration Time:\t%s\n", ser.TokenExpirationTime)
+	fmt.Fprintf(w, "\tVideo Thumbnail Workers:\t%d\n", ser.VideoThumbnailWorkers)
+	fmt.Fprintf(w, "\tVideo Thumbnail Timeout:\t%s\n", ser.VideoThumbnailTimeout)
 	fmt.Fprintf(w, "\tExec Enabled:\t%t\n", ser.EnableExec)
 	fmt.Fprintf(w, "\tThumbnails Enabled:\t%t\n", ser.EnableThumbnails)
 	fmt.Fprintf(w, "\tResize Preview:\t%t\n", ser.ResizePreview)
@@ -298,6 +301,16 @@ func getSettings(flags *pflag.FlagSet, set *settings.Settings, ser *settings.Ser
 			ser.BaseURL, err = flags.GetString(flag.Name)
 		case "tokenExpirationTime":
 			ser.TokenExpirationTime, err = flags.GetString(flag.Name)
+		case "videoThumbnailWorkers":
+			ser.VideoThumbnailWorkers, err = flags.GetInt(flag.Name)
+			if err == nil && ser.VideoThumbnailWorkers < 1 {
+				err = errors.New("videoThumbnailWorkers must be greater than 0")
+			}
+		case "videoThumbnailTimeout":
+			ser.VideoThumbnailTimeout, err = flags.GetString(flag.Name)
+			if err == nil {
+				err = validatePositiveDuration("videoThumbnailTimeout", ser.VideoThumbnailTimeout)
+			}
 		case "disableThumbnails":
 			ser.EnableThumbnails, err = flags.GetBool(flag.Name)
 			ser.EnableThumbnails = !ser.EnableThumbnails
@@ -389,4 +402,15 @@ func getSettings(flags *pflag.FlagSet, set *settings.Settings, ser *settings.Ser
 	}
 
 	return auther, nil
+}
+
+func validatePositiveDuration(name, value string) error {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid duration: %w", name, err)
+	}
+	if duration <= 0 {
+		return fmt.Errorf("%s must be greater than 0", name)
+	}
+	return nil
 }

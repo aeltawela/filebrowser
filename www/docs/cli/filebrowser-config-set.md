@@ -70,6 +70,8 @@ filebrowser config set [flags]
       --tokenExpirationTime string       user session timeout (default "2h")
       --tus.chunkSize uint               the tus chunk size (default 10485760)
       --tus.retryCount uint16            the tus retry count (default 5)
+      --videoThumbnailTimeout string     video thumbnail generation timeout (default "30s")
+      --videoThumbnailWorkers int        maximum concurrent video thumbnail generators (default 1)
       --viewMode string                  view mode for users (default "list")
 ```
 
