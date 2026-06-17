@@ -22,6 +22,8 @@ changes.
 - Keep `filebrowser/filebrowser` as the upstream sync source only. Do not open
   pull requests against upstream unless the user explicitly asks for that target.
 - Keep feature work in separate branches and separate pull requests.
+- Use Conventional Commit format for pull request titles, such as
+  `feat: add file and folder bookmarks`; do not prefix titles with `[codex]`.
 - Merge pull requests with a squash merge so each PR lands as one commit on the
   target branch, unless the user explicitly asks for a different merge method.
 

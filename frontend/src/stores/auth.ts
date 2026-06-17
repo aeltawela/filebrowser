@@ -26,14 +26,18 @@ export const useAuthStore = defineStore("auth", {
       }
 
       setLocale(user.locale || detectLocale());
-      this.user = user;
+      this.user = { ...user, bookmarks: user.bookmarks ?? [] };
     },
     updateUser(user: Partial<IUser>) {
       if (user.locale) {
         setLocale(user.locale);
       }
 
-      this.user = { ...this.user, ...cloneDeep(user) } as IUser;
+      this.user = {
+        ...this.user,
+        ...cloneDeep(user),
+        bookmarks: user.bookmarks ?? this.user?.bookmarks ?? [],
+      } as IUser;
     },
     // easily reset state using `$reset`
     clearUser() {

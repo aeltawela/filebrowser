@@ -1,7 +1,10 @@
 package users
 
 import (
+	"fmt"
+	"path"
 	"path/filepath"
+	"strings"
 
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/files"
@@ -16,6 +19,17 @@ const (
 	ListViewMode   ViewMode = "list"
 	MosaicViewMode ViewMode = "mosaic"
 )
+
+const (
+	MaxBookmarks          = 100
+	MaxBookmarkPathLength = 2048
+)
+
+// Bookmark describes a saved path for quick access.
+type Bookmark struct {
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+}
 
 // User describes a user.
 type User struct {
@@ -36,6 +50,7 @@ type User struct {
 	HideDotfiles          bool            `json:"hideDotfiles"`
 	DateFormat            bool            `json:"dateFormat"`
 	AceEditorTheme        string          `json:"aceEditorTheme"`
+	Bookmarks             []Bookmark      `json:"bookmarks"`
 }
 
 // GetRules implements rules.Provider.
@@ -51,6 +66,7 @@ var checkableFields = []string{
 	"Commands",
 	"Sorting",
 	"Rules",
+	"Bookmarks",
 }
 
 // Clean cleans up a user and verifies if all its fields
@@ -86,6 +102,12 @@ func (u *User) Clean(baseScope string, fields ...string) error {
 			if u.Rules == nil {
 				u.Rules = []rules.Rule{}
 			}
+		case "Bookmarks":
+			bookmarks, err := cleanBookmarks(u.Bookmarks)
+			if err != nil {
+				return err
+			}
+			u.Bookmarks = bookmarks
 		}
 	}
 
@@ -96,6 +118,68 @@ func (u *User) Clean(baseScope string, fields ...string) error {
 	}
 
 	return nil
+}
+
+func cleanBookmarks(bookmarks []Bookmark) ([]Bookmark, error) {
+	if bookmarks == nil {
+		return []Bookmark{}, nil
+	}
+
+	if len(bookmarks) > MaxBookmarks {
+		return nil, fmt.Errorf("bookmark limit exceeded: %w", fberrors.ErrInvalidRequestParams)
+	}
+
+	cleaned := make([]Bookmark, 0, len(bookmarks))
+	seen := make(map[string]struct{}, len(bookmarks))
+	for _, bookmark := range bookmarks {
+		normalized, err := cleanBookmarkPath(bookmark.Path)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+
+		cleaned = append(cleaned, Bookmark{
+			Path:  normalized,
+			IsDir: bookmark.IsDir,
+		})
+	}
+
+	return cleaned, nil
+}
+
+func cleanBookmarkPath(bookmarkPath string) (string, error) {
+	if bookmarkPath == "" {
+		return "", fmt.Errorf("bookmark path is empty: %w", fberrors.ErrInvalidRequestParams)
+	}
+
+	if len(bookmarkPath) > MaxBookmarkPathLength {
+		return "", fmt.Errorf("bookmark path is too long: %w", fberrors.ErrInvalidRequestParams)
+	}
+
+	if !strings.HasPrefix(bookmarkPath, "/") {
+		return "", fmt.Errorf("bookmark path must be absolute: %w", fberrors.ErrInvalidRequestParams)
+	}
+
+	for _, segment := range strings.Split(bookmarkPath, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("bookmark path contains invalid segment: %w", fberrors.ErrInvalidRequestParams)
+		}
+	}
+
+	cleaned := path.Clean(bookmarkPath)
+	if cleaned == "." {
+		cleaned = "/"
+	}
+
+	if len(cleaned) > MaxBookmarkPathLength {
+		return "", fmt.Errorf("bookmark path is too long: %w", fberrors.ErrInvalidRequestParams)
+	}
+
+	return cleaned, nil
 }
 
 // FullPath gets the full path for a user's relative path.

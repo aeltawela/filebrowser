@@ -1,3 +1,8 @@
+interface IBookmark {
+  path: string;
+  isDir: boolean;
+}
+
 interface IUser {
   id: number;
   username: string;
@@ -15,6 +20,7 @@ interface IUser {
   viewMode: ViewModeType;
   sorting?: Sorting;
   aceEditorTheme: string;
+  bookmarks: IBookmark[];
 }
 
 type ViewModeType = "list" | "mosaic" | "mosaic gallery";
@@ -33,6 +39,7 @@ interface IUserForm {
   singleClick?: boolean;
   redirectAfterCopyMove?: boolean;
   dateFormat?: boolean;
+  bookmarks?: IBookmark[];
 }
 
 interface Permissions {
