@@ -38,6 +38,39 @@
         </button>
       </div>
 
+      <div v-if="user.bookmarks && user.bookmarks.length > 0">
+        <p class="sidebar-section-title">{{ $t("sidebar.bookmarks") }}</p>
+        <div
+          v-for="bookmark in user.bookmarks"
+          :key="bookmark.path"
+          class="bookmark-row"
+          :class="{ active: isBookmarkActive(bookmark) }"
+        >
+          <button
+            class="action bookmark-action"
+            @click="toBookmark(bookmark)"
+            :aria-label="bookmarkDisplayName(bookmark)"
+            :title="bookmark.path"
+          >
+            <i class="material-icons">{{ bookmarkIcon(bookmark) }}</i>
+            <span class="bookmark-info">
+              <span class="bookmark-name">{{
+                bookmarkDisplayName(bookmark)
+              }}</span>
+              <span class="bookmark-path">{{ bookmark.path }}</span>
+            </span>
+          </button>
+          <button
+            class="action bookmark-remove-action"
+            :aria-label="$t('buttons.removeBookmark')"
+            :title="$t('buttons.removeBookmark')"
+            @click="removeBookmark(bookmark)"
+          >
+            <i class="material-icons">close</i>
+          </button>
+        </div>
+      </div>
+
       <div v-if="user.perm.admin">
         <button
           class="action"
@@ -132,7 +165,13 @@ import {
   logoutPage,
   loginPage,
 } from "@/utils/constants";
-import { files as api } from "@/api";
+import { files as api, users } from "@/api";
+import {
+  bookmarkDisplayName,
+  bookmarkIcon,
+  bookmarkRoute,
+  isBookmarkActive as bookmarkIsActive,
+} from "@/utils/bookmarks";
 import ProgressBar from "@/components/ProgressBar.vue";
 import prettyBytes from "pretty-bytes";
 
@@ -192,6 +231,31 @@ export default {
       this.$router.push({ path: "/files" });
       this.closeHovers();
     },
+    toBookmark(bookmark) {
+      this.$router.push({ path: bookmarkRoute(bookmark) });
+      this.closeHovers();
+    },
+    bookmarkDisplayName(bookmark) {
+      return bookmarkDisplayName(bookmark, this.$t("sidebar.myFiles"));
+    },
+    bookmarkIcon,
+    isBookmarkActive(bookmark) {
+      return bookmarkIsActive(bookmark, this.$route.path);
+    },
+    async removeBookmark(bookmark) {
+      const next = (this.user.bookmarks ?? []).filter(
+        (current) => current.path !== bookmark.path
+      );
+
+      try {
+        await users.update({ id: this.user.id, bookmarks: next }, [
+          "bookmarks",
+        ]);
+        useAuthStore().updateUser({ bookmarks: next });
+      } catch (e) {
+        this.$showError(e);
+      }
+    },
     toAccountSettings() {
       this.$router.push({ path: "/settings/profile" });
       this.closeHovers();
@@ -220,3 +284,68 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.sidebar-section-title {
+  color: var(--textSecondary);
+  font-size: 0.8em;
+  font-weight: bold;
+  margin: 1em 0 0.25em;
+  padding: 0 2.5em;
+  text-transform: uppercase;
+}
+
+.bookmark-row {
+  align-items: center;
+  display: flex;
+}
+
+.bookmark-row.active {
+  background: var(--hover);
+}
+
+.bookmark-action {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.25em;
+  min-width: 0;
+}
+
+.bookmark-row.active .bookmark-action,
+.bookmark-row.active .bookmark-remove-action {
+  background: transparent;
+}
+
+.bookmark-info {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bookmark-name,
+.bookmark-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark-path {
+  color: var(--textSecondary);
+  font-size: 0.75em;
+}
+
+.bookmark-remove-action {
+  color: var(--textSecondary);
+  flex: 0 0 auto;
+  opacity: 0.7;
+  width: auto;
+}
+
+.bookmark-remove-action:hover {
+  opacity: 1;
+}
+</style>

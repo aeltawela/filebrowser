@@ -101,6 +101,7 @@ const fetchData = async () => {
         username: "",
         password: "",
         rules: [],
+        bookmarks: [],
         lockPassword: false,
         id: 0,
       };

@@ -18,6 +18,12 @@
 
       <template #actions>
         <action
+          :disabled="layoutStore.loading || bookmarkSaving"
+          :icon="bookmarkIcon"
+          :label="bookmarkLabel"
+          @action="toggleCurrentBookmark"
+        />
+        <action
           :disabled="layoutStore.loading"
           v-if="authStore.user?.perm.rename"
           icon="mode_edit"
@@ -200,6 +206,11 @@ import { useRoute, useRouter } from "vue-router";
 import type { Rendition } from "epubjs";
 import { getTheme } from "@/utils/theme";
 import { useI18n } from "vue-i18n";
+import {
+  bookmarkFromResource,
+  isBookmarked,
+  useBookmarks,
+} from "@/utils/bookmarks";
 
 // CSV file size limit for preview (5MB)
 // Prevents browser memory issues with large files
@@ -277,6 +288,7 @@ const { t } = useI18n();
 
 const route = useRoute();
 const router = useRouter();
+const { bookmarks, saving: bookmarkSaving, toggleBookmark } = useBookmarks();
 
 const hasPrevious = computed(() => previousLink.value !== "");
 
@@ -317,6 +329,26 @@ const isCsv = computed(
 );
 
 const isResizeEnabled = computed(() => resizePreview);
+
+const currentBookmark = computed<IBookmark | null>(() =>
+  fileStore.req ? bookmarkFromResource(fileStore.req) : null
+);
+
+const currentIsBookmarked = computed(
+  () =>
+    currentBookmark.value !== null &&
+    isBookmarked(bookmarks.value, currentBookmark.value)
+);
+
+const bookmarkIcon = computed(() =>
+  currentIsBookmarked.value ? "star" : "star_border"
+);
+
+const bookmarkLabel = computed(() =>
+  currentIsBookmarked.value
+    ? t("buttons.removeBookmark")
+    : t("buttons.addBookmark")
+);
 
 const subtitles = computed(() => {
   if (fileStore.req?.subtitles) {
@@ -475,6 +507,18 @@ const prefetchUrl = (item: ResourceItem) => {
 };
 
 const toggleSize = () => (fullSize.value = !fullSize.value);
+
+const toggleCurrentBookmark = async () => {
+  if (!currentBookmark.value) {
+    return;
+  }
+
+  try {
+    await toggleBookmark(currentBookmark.value);
+  } catch (e: any) {
+    $showError(e);
+  }
+};
 
 const toggleNavigation = throttle(function () {
   showNav.value = true;
