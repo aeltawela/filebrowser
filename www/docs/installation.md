@@ -86,9 +86,10 @@ Video thumbnails are generated when thumbnails are enabled and both `ffmpeg`
 and `ffprobe` are available. The Docker images include these tools, so video
 thumbnails work without adding packages to the container.
 
-Thumbnail generation is cached and limited to one video process at a time by
-default. This keeps folder browsing responsive on constrained devices while
-still generating thumbnails on demand.
+Thumbnail generation is cached, limited to one video process at a time by
+default, and each `ffmpeg` process is run with a single worker thread and a
+timeout. These defaults keep folder browsing responsive on constrained devices
+while still generating thumbnails on demand.
 
 For Docker-based setups, keep thumbnails enabled and mount persistent
 configuration, database, and file volumes. Named volumes work well for
@@ -124,7 +125,27 @@ docker run --rm \
 
 For non-Docker deployments, install `ffmpeg` and `ffprobe` on the host. If
 either command is missing, video files continue to work normally and the
-interface falls back to the video file icon.
+interface falls back to the video file icon. File Browser logs a startup
+warning when thumbnails are enabled but either command is unavailable.
+
+Video thumbnail generation passes the local file path to `ffmpeg`. It works for
+files that are accessible to the File Browser process or container, such as
+local filesystems and bind-mounted Docker paths. Custom or non-local filesystem
+backends that do not expose a local path may not support video thumbnails and
+will fall back to the video icon.
+
+The default limits are suitable for most installs. Larger systems can tune them
+through the persisted server configuration:
+
+```sh
+filebrowser config set \
+  --videoThumbnailWorkers=2 \
+  --videoThumbnailTimeout=45s
+```
+
+Increasing `videoThumbnailWorkers` allows more `ffmpeg` processes to run at the
+same time. Raising `videoThumbnailTimeout` gives slow storage or large files
+more time to produce a thumbnail.
 
 ## First Boot
 

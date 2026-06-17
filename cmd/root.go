@@ -112,6 +112,8 @@ func addServerFlags(flags *pflag.FlagSet) {
 	flags.Bool("disableExec", true, "disables Command Runner feature")
 	flags.Bool("disableTypeDetectionByHeader", false, "disables type detection by reading file headers")
 	flags.Bool("disableImageResolutionCalc", false, "disables image resolution calculation by reading image files")
+	flags.Int("videoThumbnailWorkers", thumbnail.DefaultVideoWorkers, "maximum concurrent video thumbnail generators")
+	flags.String("videoThumbnailTimeout", thumbnail.DefaultVideoTimeout.String(), "video thumbnail generation timeout")
 }
 
 var rootCmd = &cobra.Command{
@@ -163,14 +165,6 @@ user created with the credentials from options "username" and "password".`,
 			}
 		}
 
-		// build img service
-		imgWorkersCount := v.GetInt("imageProcessors")
-		if imgWorkersCount < 1 {
-			return errors.New("image resize workers count could not be < 1")
-		}
-		imageService := img.New(imgWorkersCount)
-		videoThumbService := thumbnail.NewVideo()
-
 		var fileCache diskcache.Interface = diskcache.NewNoOp()
 		cacheDir := v.GetString("cacheDir")
 		if cacheDir != "" {
@@ -191,6 +185,20 @@ user created with the credentials from options "username" and "password".`,
 			return err
 		}
 		setupLog(server.Log)
+
+		// build media services
+		imgWorkersCount := v.GetInt("imageProcessors")
+		if imgWorkersCount < 1 {
+			return errors.New("image resize workers count could not be < 1")
+		}
+		imageService := img.New(imgWorkersCount)
+		videoThumbService := thumbnail.NewVideoWithLimits(
+			thumbnail.FindFFmpeg(),
+			thumbnail.FindFFprobe(),
+			server.GetVideoThumbnailWorkers(thumbnail.DefaultVideoWorkers),
+			server.GetVideoThumbnailTimeout(thumbnail.DefaultVideoTimeout),
+		)
+		warnIfVideoThumbnailsUnavailable(server, videoThumbService)
 
 		root, err := filepath.Abs(server.Root)
 		if err != nil {
@@ -281,6 +289,19 @@ user created with the credentials from options "username" and "password".`,
 	}, storeOptions{allowsNoDatabase: true}),
 }
 
+type videoThumbnailAvailability interface {
+	Available() error
+}
+
+func warnIfVideoThumbnailsUnavailable(server *settings.Server, videoThumbService videoThumbnailAvailability) {
+	if server == nil || !server.EnableThumbnails || videoThumbService == nil {
+		return
+	}
+	if err := videoThumbService.Available(); err != nil {
+		log.Printf("[WARN] Video thumbnails unavailable: %v. Install ffmpeg and ffprobe, or use a Docker image that includes them.", err)
+	}
+}
+
 func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, error) {
 	server, err := st.Settings.GetServer()
 	if err != nil {
@@ -333,6 +354,20 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 
 	if v.IsSet("tokenExpirationTime") {
 		server.TokenExpirationTime = v.GetString("tokenExpirationTime")
+	}
+
+	if v.IsSet("videoThumbnailWorkers") {
+		server.VideoThumbnailWorkers = v.GetInt("videoThumbnailWorkers")
+		if server.VideoThumbnailWorkers < 1 {
+			return nil, errors.New("videoThumbnailWorkers must be greater than 0")
+		}
+	}
+
+	if v.IsSet("videoThumbnailTimeout") {
+		server.VideoThumbnailTimeout = v.GetString("videoThumbnailTimeout")
+		if err := validatePositiveDuration("videoThumbnailTimeout", server.VideoThumbnailTimeout); err != nil {
+			return nil, err
+		}
 	}
 
 	if v.IsSet("disableThumbnails") {
@@ -456,6 +491,8 @@ func quickSetup(v *viper.Viper, s *storage.Storage) error {
 		Address:               v.GetString("address"),
 		Root:                  v.GetString("root"),
 		TokenExpirationTime:   v.GetString("tokenExpirationTime"),
+		VideoThumbnailWorkers: v.GetInt("videoThumbnailWorkers"),
+		VideoThumbnailTimeout: v.GetString("videoThumbnailTimeout"),
 		EnableThumbnails:      !v.GetBool("disableThumbnails"),
 		ResizePreview:         !v.GetBool("disablePreviewResize"),
 		EnableExec:            !v.GetBool("disableExec"),

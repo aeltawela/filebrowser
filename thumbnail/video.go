@@ -28,9 +28,17 @@ type Video struct {
 }
 
 func NewVideo() *Video {
+	return NewVideoWithTools(FindFFmpeg(), FindFFprobe())
+}
+
+func FindFFmpeg() string {
 	ffmpeg, _ := exec.LookPath("ffmpeg")
+	return ffmpeg
+}
+
+func FindFFprobe() string {
 	ffprobe, _ := exec.LookPath("ffprobe")
-	return NewVideoWithTools(ffmpeg, ffprobe)
+	return ffprobe
 }
 
 func NewVideoWithTools(ffmpeg, ffprobe string) *Video {
@@ -53,9 +61,31 @@ func NewVideoWithLimits(ffmpeg, ffprobe string, workers int, timeout time.Durati
 	}
 }
 
+func (v *Video) Available() error {
+	if v == nil {
+		return fmt.Errorf("%w: missing ffmpeg and ffprobe", ErrUnavailable)
+	}
+
+	missing := []string{}
+	if v.ffmpeg == "" {
+		missing = append(missing, "ffmpeg")
+	}
+	if v.ffprobe == "" {
+		missing = append(missing, "ffprobe")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: missing %s", ErrUnavailable, strings.Join(missing, " and "))
+	}
+	if v.sem == nil {
+		return fmt.Errorf("%w: worker limiter is not configured", ErrUnavailable)
+	}
+
+	return nil
+}
+
 func (v *Video) Thumbnail(ctx context.Context, input string, out io.Writer) error {
-	if v == nil || v.ffmpeg == "" || v.ffprobe == "" || v.sem == nil {
-		return ErrUnavailable
+	if err := v.Available(); err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, v.timeout)

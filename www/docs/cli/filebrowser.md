@@ -74,6 +74,8 @@ filebrowser [flags]
       --socketPerm uint32              unix socket file permissions (default 438)
       --tokenExpirationTime string     user session timeout (default "2h")
       --username string                username for the first user when using quick setup (default "admin")
+      --videoThumbnailTimeout string   video thumbnail generation timeout (default "30s")
+      --videoThumbnailWorkers int      maximum concurrent video thumbnail generators (default 1)
 ```
 
 ## See Also
