@@ -156,7 +156,9 @@
             size="small"
             :text="progressText"
           />
-          <p v-if="job.error" class="small">{{ job.error }}</p>
+          <pre v-if="job.error" class="small link-download-error">{{
+            job.error
+          }}</pre>
         </div>
       </div>
 
@@ -585,5 +587,11 @@ const stopQualityOptionsTimer = () => {
 
 .link-download-progress {
   margin-top: 1em;
+}
+
+.link-download-error {
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 </style>

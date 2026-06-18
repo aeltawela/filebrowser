@@ -39,6 +39,8 @@ const (
 	linkDownloaderYTDLP  = "yt-dlp"
 
 	maxLinkDownloadBodySize = 1 << 20 // 1 MiB
+	maxYTDLPErrorLines      = 12
+	maxYTDLPOutputLineLen   = 500
 )
 
 var ytDLPProgressPattern = regexp.MustCompile(`(\d+(?:\.\d+)?)%`)
@@ -58,6 +60,11 @@ type linkDownloadSettingsData struct {
 	DefaultQuality string `json:"defaultQuality"`
 	Downloader     string `json:"downloader"`
 	YTDLPAvailable bool   `json:"ytdlpAvailable"`
+}
+
+type linkDownloadYTDLPUpdateData struct {
+	Version string `json:"version,omitempty"`
+	Output  string `json:"output,omitempty"`
 }
 
 type linkDownloadQualityData struct {
@@ -99,6 +106,7 @@ type linkDownloadJob struct {
 	downloader    string
 	status        string
 	err           string
+	ytdlpOutput   []string
 	progress      float64
 	bytesReceived int64
 	bytesTotal    int64
@@ -142,6 +150,20 @@ func linkDownloadSettingsHandler(_ *linkDownloadManager) handleFunc {
 			Downloader:     cfg.Downloader,
 			YTDLPAvailable: ytDLPAvailable(cfg.YTDLPPath),
 		})
+	})
+}
+
+func linkDownloadYTDLPUpdateHandler(_ *linkDownloadManager) handleFunc {
+	return withAdmin(func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
+		cfg := d.settings.LinkDownload
+		cfg.ApplyDefaults()
+
+		result, err := updateYTDLP(r.Context(), cfg.YTDLPPath)
+		if err != nil {
+			return errToStatus(err), err
+		}
+
+		return renderJSON(w, r, result)
 	})
 }
 
@@ -704,10 +726,72 @@ func runYTDLP(ctx context.Context, binary string, args []string, job *linkDownlo
 		return ctx.Err()
 	}
 	if err != nil {
+		if output := job.ytdlpOutputSummary(); output != "" {
+			return fmt.Errorf("yt-dlp failed: %w\n%s", err, output)
+		}
 		return fmt.Errorf("yt-dlp failed: %w", err)
 	}
 
 	return nil
+}
+
+func updateYTDLP(ctx context.Context, binary string) (linkDownloadYTDLPUpdateData, error) {
+	binary = strings.TrimSpace(binary)
+	if !ytDLPAvailable(binary) {
+		return linkDownloadYTDLPUpdateData{}, fmt.Errorf("yt-dlp is not available: %w", fberrors.ErrInvalidRequestParams)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binary, "-U")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return linkDownloadYTDLPUpdateData{}, ctx.Err()
+	}
+
+	trimmedOutput := trimCommandOutput(string(output))
+	if err != nil {
+		if trimmedOutput != "" {
+			return linkDownloadYTDLPUpdateData{}, fmt.Errorf("yt-dlp update failed: %w\n%s", err, trimmedOutput)
+		}
+		return linkDownloadYTDLPUpdateData{}, fmt.Errorf("yt-dlp update failed: %w", err)
+	}
+
+	return linkDownloadYTDLPUpdateData{
+		Version: ytDLPVersion(ctx, binary),
+		Output:  trimmedOutput,
+	}, nil
+}
+
+func ytDLPVersion(ctx context.Context, binary string) string {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	output, err := exec.CommandContext(ctx, binary, "--version").Output()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(output))
+}
+
+func trimCommandOutput(output string) string {
+	output = strings.ReplaceAll(output, "\r\n", "\n")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) > maxYTDLPErrorLines {
+		lines = lines[len(lines)-maxYTDLPErrorLines:]
+	}
+
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) > maxYTDLPOutputLineLen {
+			line = line[:maxYTDLPOutputLineLen] + "..."
+		}
+		lines[i] = line
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 type linkDownloadProgressReader struct {
@@ -826,6 +910,8 @@ func (j *linkDownloadJob) addBytes(n int64) {
 }
 
 func (j *linkDownloadJob) observeYTDLPLine(line string) {
+	j.recordYTDLPOutput(line)
+
 	if match := ytDLPProgressPattern.FindStringSubmatch(line); len(match) == 2 {
 		if percent, err := strconv.ParseFloat(match[1], 64); err == nil {
 			j.mu.Lock()
@@ -841,6 +927,34 @@ func (j *linkDownloadJob) observeYTDLPLine(line string) {
 			j.setName(filepath.Base(strings.TrimSpace(parts[1])))
 		}
 	}
+}
+
+func (j *linkDownloadJob) recordYTDLPOutput(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+
+	if strings.HasPrefix(line, "[download]") && ytDLPProgressPattern.MatchString(line) {
+		return
+	}
+
+	if len(line) > maxYTDLPOutputLineLen {
+		line = line[:maxYTDLPOutputLineLen] + "..."
+	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.ytdlpOutput = append(j.ytdlpOutput, line)
+	if len(j.ytdlpOutput) > maxYTDLPErrorLines {
+		j.ytdlpOutput = j.ytdlpOutput[len(j.ytdlpOutput)-maxYTDLPErrorLines:]
+	}
+}
+
+func (j *linkDownloadJob) ytdlpOutputSummary() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return strings.Join(j.ytdlpOutput, "\n")
 }
 
 func (j *linkDownloadJob) complete() {

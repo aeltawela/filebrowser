@@ -2,6 +2,7 @@ package fbhttp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -138,6 +139,84 @@ func TestQualityOptionsFromFormats(t *testing.T) {
 	}
 }
 
+func TestRunYTDLPIncludesOutputOnFailure(t *testing.T) {
+	binary := writeYTDLPTestScript(t, `
+echo "[download] 12.3% of 1.00MiB"
+echo "ERROR: requested format is not available" >&2
+exit 1
+`)
+
+	job := &linkDownloadJob{}
+	err := runYTDLP(context.Background(), binary, []string{"https://example.com/video"}, job)
+	if err == nil {
+		t.Fatal("expected yt-dlp failure")
+	}
+
+	if !strings.Contains(err.Error(), "yt-dlp failed") {
+		t.Fatalf("expected yt-dlp failure prefix, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "ERROR: requested format is not available") {
+		t.Fatalf("expected yt-dlp output in error, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "12.3%") {
+		t.Fatalf("expected progress output to be omitted, got %q", err.Error())
+	}
+}
+
+func TestUpdateYTDLPReturnsOutputAndVersion(t *testing.T) {
+	binary := writeYTDLPTestScript(t, `
+case "$1" in
+  -U)
+    echo "yt-dlp is up to date"
+    ;;
+  --version)
+    echo "2099.01.01"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`)
+
+	result, err := updateYTDLP(context.Background(), binary)
+	if err != nil {
+		t.Fatalf("expected successful update, got %v", err)
+	}
+
+	if result.Version != "2099.01.01" {
+		t.Fatalf("version = %q, want 2099.01.01", result.Version)
+	}
+	if result.Output != "yt-dlp is up to date" {
+		t.Fatalf("output = %q, want update output", result.Output)
+	}
+}
+
+func TestUpdateYTDLPIncludesOutputOnFailure(t *testing.T) {
+	binary := writeYTDLPTestScript(t, `
+case "$1" in
+  -U)
+    echo "ERROR: installed yt-dlp cannot self-update" >&2
+    exit 1
+    ;;
+  --version)
+    echo "2099.01.01"
+    ;;
+esac
+`)
+
+	_, err := updateYTDLP(context.Background(), binary)
+	if err == nil {
+		t.Fatal("expected update failure")
+	}
+
+	if !strings.Contains(err.Error(), "yt-dlp update failed") {
+		t.Fatalf("expected update failure prefix, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "ERROR: installed yt-dlp cannot self-update") {
+		t.Fatalf("expected update output in error, got %q", err.Error())
+	}
+}
+
 func setupLinkDownloadTest(t *testing.T, perm users.Permissions, enabled bool) (*storage.Storage, string, string) {
 	t.Helper()
 
@@ -176,6 +255,17 @@ func setupLinkDownloadTest(t *testing.T, perm users.Permissions, enabled bool) (
 	}
 
 	return st, signToken(t, perm, key), scope
+}
+
+func writeYTDLPTestScript(t *testing.T, body string) string {
+	t.Helper()
+
+	binary := filepath.Join(t.TempDir(), "yt-dlp")
+	script := "#!/bin/sh\n" + body
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake yt-dlp: %v", err)
+	}
+	return binary
 }
 
 func postLinkDownload(t *testing.T, st *storage.Storage, token string, manager *linkDownloadManager, reqBody linkDownloadRequest) linkDownloadJobData {

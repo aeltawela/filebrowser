@@ -32,3 +32,10 @@ export async function cancel(id: string) {
     method: "DELETE",
   });
 }
+
+export async function updateYTDLP() {
+  const res = await fetchURL("/api/downloads/ytdlp/update", {
+    method: "POST",
+  });
+  return (await res.json()) as LinkDownloadYTDLPUpdate;
+}
