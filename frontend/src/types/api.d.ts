@@ -49,6 +49,11 @@ interface LinkDownloadSettings {
   ytdlpAvailable: boolean;
 }
 
+interface LinkDownloadYTDLPUpdate {
+  version?: string;
+  output?: string;
+}
+
 interface LinkDownloadQualityOption {
   label: string;
   quality: string;

@@ -82,6 +82,7 @@ func NewHandler(
 
 	linkDownloads := newLinkDownloadManager()
 	api.Handle("/downloads/settings", monkey(linkDownloadSettingsHandler(linkDownloads), "")).Methods("GET")
+	api.Handle("/downloads/ytdlp/update", monkey(linkDownloadYTDLPUpdateHandler(linkDownloads), "")).Methods("POST")
 	api.Handle("/downloads", monkey(linkDownloadListHandler(linkDownloads), "")).Methods("GET")
 	api.Handle("/downloads", monkey(linkDownloadPostHandler(linkDownloads), "")).Methods("POST")
 	api.Handle("/downloads/qualities", monkey(linkDownloadQualitiesHandler(linkDownloads), "")).Methods("GET")

@@ -248,6 +248,29 @@
               id="link-downloads-ytdlp-path"
             />
           </p>
+
+          <div class="link-download-ytdlp-update">
+            <button
+              class="button button--flat"
+              type="button"
+              :disabled="updatingYTDLP"
+              @click="updateYTDLP"
+            >
+              {{
+                updatingYTDLP
+                  ? t("settings.linkDownloadsYTDLPUpdating")
+                  : t("settings.linkDownloadsYTDLPUpdate")
+              }}
+            </button>
+            <span class="small">{{
+              t("settings.linkDownloadsYTDLPUpdateHelp")
+            }}</span>
+          </div>
+          <pre
+            v-if="ytdlpUpdateOutput"
+            class="small link-download-ytdlp-output"
+            >{{ ytdlpUpdateOutput }}</pre
+          >
         </div>
 
         <div class="card-action">
@@ -341,7 +364,7 @@
 </template>
 
 <script setup lang="ts">
-import { settings as api } from "@/api";
+import { downloads, settings as api } from "@/api";
 import { StatusError } from "@/api/utils";
 import Rules from "@/components/settings/Rules.vue";
 import Themes from "@/components/settings/Themes.vue";
@@ -357,6 +380,8 @@ const error = ref<StatusError | null>(null);
 const originalSettings = ref<ISettings | null>(null);
 const settings = ref<ISettings | null>(null);
 const debounceTimeout = ref<number | null>(null);
+const updatingYTDLP = ref(false);
+const ytdlpUpdateOutput = ref("");
 
 const commandObject = ref<{
   [key: string]: string[] | string;
@@ -482,11 +507,38 @@ const save = async () => {
   try {
     await api.update(newSettings);
     $showSuccess(t("settings.settingsUpdated"));
+    return true;
   } catch (e: any) {
     $showError(e);
+    return false;
   }
+};
 
-  return true;
+const updateYTDLP = async () => {
+  if (settings.value === null || updatingYTDLP.value) return;
+
+  ytdlpUpdateOutput.value = "";
+  updatingYTDLP.value = true;
+
+  try {
+    const saved = await save();
+    if (!saved) return;
+
+    const result = await downloads.updateYTDLP();
+    ytdlpUpdateOutput.value =
+      result.output ||
+      (result.version
+        ? t("settings.linkDownloadsYTDLPVersion", {
+            version: result.version,
+          })
+        : t("settings.linkDownloadsYTDLPNoOutput"));
+    $showSuccess(t("settings.linkDownloadsYTDLPUpdated"));
+  } catch (e: any) {
+    ytdlpUpdateOutput.value = e.message || String(e);
+    $showError(e);
+  } finally {
+    updatingYTDLP.value = false;
+  }
 };
 // Parse the user-friendly input (e.g., "20M" or "1T") to bytes
 const parseBytes = (input: string) => {
@@ -562,3 +614,21 @@ onBeforeUnmount(() => {
   }
 });
 </script>
+
+<style scoped>
+.link-download-ytdlp-update {
+  display: grid;
+  gap: 0.5em;
+  margin: 0 0 0.9em;
+}
+
+.link-download-ytdlp-update .button {
+  justify-self: start;
+}
+
+.link-download-ytdlp-output {
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+</style>
