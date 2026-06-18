@@ -56,81 +56,17 @@
           />
         </p>
 
-        <div class="link-download-field">
+        <p>
           <label for="link-download-path">{{
             t("linkDownload.destination")
           }}</label>
-          <div class="link-download-destination">
-            <input
-              id="link-download-path"
-              class="input input--block"
-              type="text"
-              v-model.trim="linkForm.path"
-            />
-            <button
-              class="button button--flat"
-              type="button"
-              @click="toggleDestinationBrowser"
-            >
-              <i class="material-icons">folder_open</i>
-              {{ t("linkDownload.browseDestination") }}
-            </button>
-          </div>
-
-          <div v-if="browsingDestination" class="destination-browser">
-            <div class="destination-browser__header">
-              <div class="destination-browser__breadcrumbs">
-                <button
-                  v-for="crumb in destinationBreadcrumbs"
-                  :key="crumb.path"
-                  class="button button--flat"
-                  type="button"
-                  @click="loadDestination(crumb.path)"
-                >
-                  {{ crumb.name }}
-                </button>
-              </div>
-              <button
-                class="button button--flat"
-                type="button"
-                @click="selectDestination()"
-              >
-                {{ t("linkDownload.selectDestination") }}
-              </button>
-            </div>
-
-            <p v-if="destinationLoading" class="small">
-              {{ t("linkDownload.loadingDestination") }}
-            </p>
-            <p v-else-if="destinationError" class="small">
-              {{ destinationError }}
-            </p>
-            <div v-else class="destination-browser__list">
-              <button
-                v-if="destinationBrowserPath !== '/'"
-                class="destination-browser__item"
-                type="button"
-                @click="loadDestination(parentDestinationPath)"
-              >
-                <i class="material-icons">subdirectory_arrow_left</i>
-                {{ t("linkDownload.parentDestination") }}
-              </button>
-              <button
-                v-for="folder in destinationFolders"
-                :key="folder.path"
-                class="destination-browser__item"
-                type="button"
-                @click="loadDestination(folder.path)"
-              >
-                <i class="material-icons">folder</i>
-                {{ folder.name }}
-              </button>
-              <p v-if="destinationFolders.length === 0" class="small">
-                {{ t("linkDownload.emptyDestination") }}
-              </p>
-            </div>
-          </div>
-        </div>
+          <input
+            id="link-download-path"
+            class="input input--block"
+            type="text"
+            v-model.trim="linkForm.path"
+          />
+        </p>
 
         <p>
           <label for="link-download-filename">{{
@@ -265,12 +201,11 @@ import {
 } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { downloads, files as filesApi } from "@/api";
+import { downloads } from "@/api";
 import { removePrefix } from "@/api/utils";
 import ProgressBar from "@/components/ProgressBar.vue";
 import { useFileStore } from "@/stores/file";
 import { useLayoutStore } from "@/stores/layout";
-import { encodePath } from "@/utils/url";
 
 import * as upload from "@/utils/upload";
 
@@ -298,12 +233,6 @@ const loadingQualityOptions = ref(false);
 const qualityOptionsError = ref("");
 const qualityFetchTimer = ref<number | null>(null);
 const qualityFetchSerial = ref(0);
-const browsingDestination = ref(false);
-const destinationBrowserPath = ref("/");
-const destinationFolders = ref<ResourceItem[]>([]);
-const destinationLoading = ref(false);
-const destinationError = ref("");
-const destinationFetchSerial = ref(0);
 
 const linkForm = reactive<LinkDownloadRequest>({
   url: "",
@@ -448,89 +377,6 @@ const currentFolder = () => {
   return path.endsWith("/") ? path : path + "/";
 };
 
-const normalizeDestinationPath = (rawPath: string) => {
-  let path = rawPath.trim();
-  if (path.startsWith("/files")) {
-    path = removePrefix(path);
-  }
-
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    // Keep user-entered text as-is if it is not a valid encoded path.
-  }
-
-  if (path === "") return "/";
-  if (!path.startsWith("/")) path = "/" + path;
-
-  const parts = path.split("/").filter(Boolean);
-  return parts.length === 0 ? "/" : "/" + parts.join("/");
-};
-
-const parentDestinationPath = computed(() => {
-  const parts = destinationBrowserPath.value.split("/").filter(Boolean);
-  parts.pop();
-  return parts.length === 0 ? "/" : "/" + parts.join("/");
-});
-
-const destinationBreadcrumbs = computed(() => {
-  const parts = destinationBrowserPath.value.split("/").filter(Boolean);
-  const crumbs = [{ name: t("files.home"), path: "/" }];
-  let path = "";
-
-  for (const part of parts) {
-    path += "/" + part;
-    crumbs.push({ name: part, path });
-  }
-
-  return crumbs;
-});
-
-const loadDestination = async (rawPath: string) => {
-  const path = normalizeDestinationPath(rawPath);
-  const serial = destinationFetchSerial.value + 1;
-  destinationFetchSerial.value = serial;
-  destinationLoading.value = true;
-  destinationError.value = "";
-
-  try {
-    const resource = await filesApi.fetch(
-      `/files${path === "/" ? "" : encodePath(path)}`
-    );
-    if (destinationFetchSerial.value !== serial) return;
-    if (!resource.isDir) {
-      destinationFolders.value = [];
-      destinationError.value = t("errors.notFound");
-      return;
-    }
-
-    destinationBrowserPath.value = path;
-    destinationFolders.value = resource.items
-      .filter((item) => item.isDir)
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch (error: any) {
-    if (destinationFetchSerial.value !== serial) return;
-    destinationFolders.value = [];
-    destinationError.value = error.message || String(error);
-  } finally {
-    if (destinationFetchSerial.value === serial) {
-      destinationLoading.value = false;
-    }
-  }
-};
-
-const toggleDestinationBrowser = async () => {
-  browsingDestination.value = !browsingDestination.value;
-  if (browsingDestination.value) {
-    await loadDestination(linkForm.path || currentFolder());
-  }
-};
-
-const selectDestination = (rawPath = destinationBrowserPath.value) => {
-  linkForm.path = normalizeDestinationPath(rawPath);
-  browsingDestination.value = false;
-};
-
 const openLinkDownload = async () => {
   if (!linkSettings.value) {
     linkSettings.value = await downloads.settings();
@@ -545,8 +391,6 @@ const openLinkDownload = async () => {
   linkForm.filename = "";
   linkForm.downloader = linkSettings.value.downloader || "auto";
   linkForm.overwrite = false;
-  browsingDestination.value = false;
-  destinationError.value = "";
   qualityOptions.value = defaultQualityOptions();
   qualityOptionsError.value = "";
   setQuality(configuredDefaultQuality);
@@ -731,10 +575,6 @@ const stopQualityOptionsTimer = () => {
   margin: 0 0 0.9em;
 }
 
-.link-download-field {
-  margin: 0 0 0.9em;
-}
-
 .link-download {
   padding: 1em 1.25em 0.25em;
 }
@@ -745,76 +585,5 @@ const stopQualityOptionsTimer = () => {
 
 .link-download-progress {
   margin-top: 1em;
-}
-
-.link-download-destination {
-  display: flex;
-  gap: 0.5em;
-  align-items: center;
-}
-
-.link-download-destination .input {
-  flex: 1;
-}
-
-.link-download-destination .button {
-  display: inline-flex;
-  gap: 0.25em;
-  align-items: center;
-  flex: 0 0 auto;
-}
-
-.destination-browser {
-  margin-top: 0.5em;
-  padding: 0.75em;
-  border: 1px solid var(--borderPrimary);
-  background: var(--surfaceSecondary);
-}
-
-.destination-browser__header {
-  display: flex;
-  gap: 0.5em;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 0.5em;
-}
-
-.destination-browser__breadcrumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25em;
-  min-width: 0;
-}
-
-.destination-browser__list {
-  display: grid;
-  gap: 0.25em;
-  max-height: 12em;
-  overflow: auto;
-}
-
-.destination-browser__item {
-  display: flex;
-  gap: 0.5em;
-  align-items: center;
-  width: 100%;
-  padding: 0.5em;
-  border: 0;
-  color: inherit;
-  text-align: left;
-  background: transparent;
-  cursor: pointer;
-}
-
-.destination-browser__item:hover {
-  background: var(--surfacePrimary);
-}
-
-@media (max-width: 480px) {
-  .link-download-destination,
-  .destination-browser__header {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }
 </style>
