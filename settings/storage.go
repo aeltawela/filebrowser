@@ -50,6 +50,8 @@ func (s *Storage) Get() (*Settings, error) {
 		}
 	}
 
+	set.LinkDownload.ApplyDefaults()
+
 	if set.FileMode == 0 {
 		set.FileMode = DefaultFileMode
 	}
@@ -98,6 +100,8 @@ func (s *Storage) Save(set *Settings) error {
 	if set.Commands == nil {
 		set.Commands = map[string][]string{}
 	}
+
+	set.LinkDownload.ApplyDefaults()
 
 	for _, event := range defaultEvents {
 		if _, ok := set.Commands["before_"+event]; !ok {
