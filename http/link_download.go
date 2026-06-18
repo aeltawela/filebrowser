@@ -588,7 +588,9 @@ func (m *linkDownloadManager) writeDirectDownload(ctx context.Context, d *data, 
 	targetDir, targetName := path.Split(targetPath)
 	tmpPath := path.Join(targetDir, "."+targetName+".filebrowser-download-"+job.id+".tmp")
 	_ = d.user.Fs.Remove(tmpPath)
-	defer d.user.Fs.Remove(tmpPath)
+	defer func() {
+		_ = d.user.Fs.Remove(tmpPath)
+	}()
 
 	file, err := d.user.Fs.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, d.settings.FileMode)
 	if err != nil {

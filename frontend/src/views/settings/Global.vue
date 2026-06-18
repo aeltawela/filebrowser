@@ -384,9 +384,12 @@ const $showSuccess = inject<IToastSuccess>("$showSuccess")!;
 const { t } = useI18n();
 
 const layoutStore = useLayoutStore();
+const defaultQualityCustomMode = ref(false);
 
 const defaultQualityPreset = computed({
   get() {
+    if (defaultQualityCustomMode.value) return "custom";
+
     const quality =
       settings.value?.linkDownload.defaultQuality ||
       "bestvideo*+bestaudio/best";
@@ -395,15 +398,11 @@ const defaultQualityPreset = computed({
   set(value: string) {
     if (!settings.value) return;
     if (value === "custom") {
-      if (
-        defaultQualityPresetValues.has(
-          settings.value.linkDownload.defaultQuality
-        )
-      ) {
-        settings.value.linkDownload.defaultQuality = "";
-      }
+      defaultQualityCustomMode.value = true;
       return;
     }
+
+    defaultQualityCustomMode.value = false;
     settings.value.linkDownload.defaultQuality = value;
   },
 });
