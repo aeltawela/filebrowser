@@ -10,7 +10,8 @@ RUN apk update && \
 FROM alpine:3.23
 
 # Install runtime dependencies. ffmpeg includes ffprobe for video thumbnails.
-RUN apk --no-cache add ca-certificates ffmpeg mailcap tini-static
+# yt-dlp powers media link downloads when the feature is enabled.
+RUN apk --no-cache add ca-certificates ffmpeg mailcap tini-static yt-dlp
 
 # Define non-root user UID and GID
 ENV UID=1000

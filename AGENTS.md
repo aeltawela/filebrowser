@@ -48,6 +48,7 @@ changes.
 
 - Backend tests: `go test ./...`
 - Focused backend tests: `go test ./files ./img ./http ./cmd`
+- Backend lint: `golangci-lint run`
 - Race tests before publishing when practical: `go test --race ./...`
 - Frontend install: `cd frontend && pnpm install --frozen-lockfile`
 - Frontend checks: `cd frontend && pnpm run lint && pnpm run test && pnpm run build`
@@ -55,6 +56,8 @@ changes.
 
 If `pnpm` is not installed locally, use the package manager version declared in
 `frontend/package.json` through `npx`, for example `npx -y pnpm@10.33.4`.
+If `golangci-lint` is not installed locally, use the CI major version through
+`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run`.
 
 ## Implementation Notes
 
@@ -66,6 +69,8 @@ If `pnpm` is not installed locally, use the package manager version declared in
   browsing.
 - Keep Docker images, CLI flags, environment variables, defaults, and docs
   aligned whenever a runtime-facing option or dependency changes.
+- For Go changes, run the backend lint command before publishing; CI enforces
+  checks such as `errcheck` that are not covered by `go test`.
 - Do not edit translation files directly for ordinary UI copy. This project
   uses Transifex for translation updates.
 - Use existing helper APIs and storage abstractions before adding new patterns.

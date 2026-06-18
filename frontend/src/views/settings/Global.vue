@@ -153,6 +153,101 @@
               />
             </p>
           </div>
+
+          <h3>{{ t("settings.linkDownloads") }}</h3>
+          <p class="small">{{ t("settings.linkDownloadsHelp") }}</p>
+
+          <p>
+            <input
+              type="checkbox"
+              v-model="settings.linkDownload.enabled"
+              id="link-downloads-enabled"
+            />
+            {{ t("settings.linkDownloadsEnabled") }}
+          </p>
+
+          <p>
+            <label for="link-downloads-default-path">{{
+              t("settings.linkDownloadsDefaultPath")
+            }}</label>
+            <input
+              class="input input--block"
+              type="text"
+              v-model="settings.linkDownload.defaultPath"
+              id="link-downloads-default-path"
+            />
+          </p>
+
+          <p>
+            <label for="link-downloads-default-quality">{{
+              t("settings.linkDownloadsDefaultQuality")
+            }}</label>
+            <select
+              class="input input--block"
+              v-model="defaultQualityPreset"
+              id="link-downloads-default-quality"
+            >
+              <option value="bestvideo*+bestaudio/best">
+                {{ t("linkDownload.qualityBest") }}
+              </option>
+              <option value="bv*[height<=1080]+ba/b[height<=1080]/wv*+ba/w">
+                {{ t("linkDownload.quality1080") }}
+              </option>
+              <option value="bv*[height<=720]+ba/b[height<=720]/wv*+ba/w">
+                {{ t("linkDownload.quality720") }}
+              </option>
+              <option value="bestaudio/best">
+                {{ t("linkDownload.qualityAudio") }}
+              </option>
+              <option value="custom">
+                {{ t("linkDownload.qualityCustom") }}
+              </option>
+            </select>
+            <input
+              v-if="defaultQualityPreset === 'custom'"
+              class="input input--block"
+              type="text"
+              required
+              :placeholder="t('linkDownload.formatSelectorPlaceholder')"
+              v-model="settings.linkDownload.defaultQuality"
+            />
+            <span v-if="defaultQualityPreset === 'custom'" class="small">
+              {{ t("linkDownload.formatSelectorHelp") }}
+            </span>
+          </p>
+
+          <p>
+            <label for="link-downloads-downloader">{{
+              t("settings.linkDownloadsDownloader")
+            }}</label>
+            <select
+              class="input input--block"
+              v-model="settings.linkDownload.downloader"
+              id="link-downloads-downloader"
+            >
+              <option value="auto">
+                {{ t("linkDownload.downloaderAuto") }}
+              </option>
+              <option value="yt-dlp">
+                {{ t("linkDownload.downloaderYTDLP") }}
+              </option>
+              <option value="direct">
+                {{ t("linkDownload.downloaderDirect") }}
+              </option>
+            </select>
+          </p>
+
+          <p>
+            <label for="link-downloads-ytdlp-path">{{
+              t("settings.linkDownloadsYTDLPPath")
+            }}</label>
+            <input
+              class="input input--block"
+              type="text"
+              v-model="settings.linkDownload.ytdlpPath"
+              id="link-downloads-ytdlp-path"
+            />
+          </p>
         </div>
 
         <div class="card-action">
@@ -268,12 +363,49 @@ const commandObject = ref<{
 }>({});
 const shellValue = ref<string>("");
 
+const defaultLinkDownloadSettings: SettingsLinkDownload = {
+  enabled: false,
+  defaultPath: "",
+  defaultQuality: "bestvideo*+bestaudio/best",
+  downloader: "auto",
+  ytdlpPath: "yt-dlp",
+};
+
+const defaultQualityPresetValues = new Set([
+  "bestvideo*+bestaudio/best",
+  "bv*[height<=1080]+ba/b[height<=1080]/wv*+ba/w",
+  "bv*[height<=720]+ba/b[height<=720]/wv*+ba/w",
+  "bestaudio/best",
+]);
+
 const $showError = inject<IToastError>("$showError")!;
 const $showSuccess = inject<IToastSuccess>("$showSuccess")!;
 
 const { t } = useI18n();
 
 const layoutStore = useLayoutStore();
+const defaultQualityCustomMode = ref(false);
+
+const defaultQualityPreset = computed({
+  get() {
+    if (defaultQualityCustomMode.value) return "custom";
+
+    const quality =
+      settings.value?.linkDownload.defaultQuality ||
+      "bestvideo*+bestaudio/best";
+    return defaultQualityPresetValues.has(quality) ? quality : "custom";
+  },
+  set(value: string) {
+    if (!settings.value) return;
+    if (value === "custom") {
+      defaultQualityCustomMode.value = true;
+      return;
+    }
+
+    defaultQualityCustomMode.value = false;
+    settings.value.linkDownload.defaultQuality = value;
+  },
+});
 
 const formattedChunkSize = computed({
   get() {
@@ -396,7 +528,14 @@ onMounted(async () => {
   try {
     layoutStore.loading = true;
     const original: ISettings = await api.get();
-    const newSettings: ISettings = { ...original, commands: {} };
+    const newSettings: ISettings = {
+      ...original,
+      linkDownload: {
+        ...defaultLinkDownloadSettings,
+        ...original.linkDownload,
+      },
+      commands: {},
+    };
 
     const keys = Object.keys(original.commands) as Array<keyof SettingsCommand>;
     for (const key of keys) {

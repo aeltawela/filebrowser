@@ -9,6 +9,7 @@ interface ISettings {
   rules: any[];
   branding: SettingsBranding;
   tus: SettingsTus;
+  linkDownload: SettingsLinkDownload;
   shell: string[];
   commands: SettingsCommand;
 }
@@ -39,6 +40,14 @@ interface SettingsBranding {
 interface SettingsTus {
   chunkSize: number;
   retryCount: number;
+}
+
+interface SettingsLinkDownload {
+  enabled: boolean;
+  defaultPath: string;
+  defaultQuality: string;
+  downloader: LinkDownloadDownloader;
+  ytdlpPath: string;
 }
 
 interface SettingsCommand {

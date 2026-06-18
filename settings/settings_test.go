@@ -49,3 +49,29 @@ func TestServerVideoThumbnailTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestLinkDownloadApplyDefaults(t *testing.T) {
+	linkDownload := &LinkDownload{}
+	linkDownload.ApplyDefaults()
+
+	if linkDownload.DefaultQuality != DefaultLinkDownloadQuality {
+		t.Fatalf("default quality = %q, want %q", linkDownload.DefaultQuality, DefaultLinkDownloadQuality)
+	}
+
+	if linkDownload.Downloader != DefaultLinkDownloadDownloader {
+		t.Fatalf("default downloader = %q, want %q", linkDownload.Downloader, DefaultLinkDownloadDownloader)
+	}
+
+	if linkDownload.YTDLPPath != DefaultLinkDownloadYTDLPPath {
+		t.Fatalf("yt-dlp path = %q, want %q", linkDownload.YTDLPPath, DefaultLinkDownloadYTDLPPath)
+	}
+}
+
+func TestLinkDownloadApplyDefaultsMigratesBestQuality(t *testing.T) {
+	linkDownload := &LinkDownload{DefaultQuality: "best"}
+	linkDownload.ApplyDefaults()
+
+	if linkDownload.DefaultQuality != DefaultLinkDownloadQuality {
+		t.Fatalf("default quality = %q, want %q", linkDownload.DefaultQuality, DefaultLinkDownloadQuality)
+	}
+}

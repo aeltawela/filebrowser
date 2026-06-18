@@ -147,6 +147,19 @@ Increasing `videoThumbnailWorkers` allows more `ffmpeg` processes to run at the
 same time. Raising `videoThumbnailTimeout` gives slow storage or large files
 more time to produce a thumbnail.
 
+## Link Downloads
+
+Administrators can enable link downloads from the global settings page. When
+enabled, users with create permission can paste an HTTP or HTTPS link and save
+the result into their File Browser scope.
+
+Direct HTTP(S) file downloads work without extra tools. The Docker images
+include `yt-dlp`, so video-site links, quality selection, and audio-only
+downloads work when the feature is enabled. For non-Docker deployments, install
+`yt-dlp` where the File Browser process can execute it and set the `yt-dlp`
+path in global settings. If the downloader mode is set to auto and `yt-dlp` is
+unavailable, File Browser falls back to a direct HTTP(S) download.
+
 ## First Boot
 
 Your instance is now up and running. File Browser will automatically bootstrap a database, in which the configuration and the users are stored. You can find the address in which your instance is running, as well as the randomly generated password for the user `admin`, in the console logs.
