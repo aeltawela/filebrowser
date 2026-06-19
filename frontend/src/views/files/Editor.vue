@@ -5,6 +5,13 @@
       <title>{{ fileStore.req?.name ?? "" }}</title>
 
       <action
+        :disabled="bookmarkSaving"
+        :icon="bookmarkIcon"
+        :label="bookmarkLabel"
+        @action="toggleCurrentBookmark"
+      />
+
+      <action
         icon="add"
         @action="increaseFontSize"
         :label="t('buttons.increaseFontSize')"
@@ -95,10 +102,22 @@ import { useLayoutStore } from "@/stores/layout";
 import { getEditorTheme } from "@/utils/theme";
 import { marked } from "marked";
 import markedKatex from "marked-katex-extension";
-import { inject, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
+import {
+  computed,
+  inject,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watchEffect,
+} from "vue";
 import { useI18n } from "vue-i18n";
 import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { read, copy } from "@/utils/clipboard";
+import {
+  bookmarkFromResource,
+  isBookmarked,
+  useBookmarks,
+} from "@/utils/bookmarks";
 
 const $showError = inject<IToastError>("$showError")!;
 
@@ -110,6 +129,7 @@ const { t } = useI18n();
 
 const route = useRoute();
 const router = useRouter();
+const { bookmarks, saving: bookmarkSaving, toggleBookmark } = useBookmarks();
 
 const editor = ref<Ace.Editor | null>(null);
 const fontSize = ref(parseInt(localStorage.getItem("editorFontSize") || "14"));
@@ -126,6 +146,26 @@ const katexOptions = {
 marked.use(markedKatex(katexOptions));
 
 const isSelectionEmpty = ref(true);
+
+const currentBookmark = computed<IBookmark | null>(() =>
+  fileStore.req ? bookmarkFromResource(fileStore.req) : null
+);
+
+const currentIsBookmarked = computed(
+  () =>
+    currentBookmark.value !== null &&
+    isBookmarked(bookmarks.value, currentBookmark.value)
+);
+
+const bookmarkIcon = computed(() =>
+  currentIsBookmarked.value ? "star" : "star_border"
+);
+
+const bookmarkLabel = computed(() =>
+  currentIsBookmarked.value
+    ? t("buttons.removeBookmark")
+    : t("buttons.addBookmark")
+);
 
 const executeEditorCommand = (name: string) => {
   if (name == "paste") {
@@ -292,6 +332,18 @@ const decreaseFontSize = () => {
     fontSize.value -= 1;
     editor.value?.setFontSize(fontSize.value);
     localStorage.setItem("editorFontSize", fontSize.value.toString());
+  }
+};
+
+const toggleCurrentBookmark = async () => {
+  if (!currentBookmark.value) {
+    return;
+  }
+
+  try {
+    await toggleBookmark(currentBookmark.value);
+  } catch (e: any) {
+    $showError(e);
   }
 };
 

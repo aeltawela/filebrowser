@@ -72,6 +72,12 @@
           :label="t('buttons.upload')"
           @action="uploadFunc"
         />
+        <action
+          :disabled="bookmarkSaving"
+          :icon="currentBookmarkIcon"
+          :label="currentBookmarkLabel"
+          @action="toggleCurrentBookmark"
+        />
         <action icon="info" :label="t('buttons.info')" show="info" />
         <action
           icon="check_circle"
@@ -91,6 +97,13 @@
       <span v-if="fileStore.selectedCount > 0">
         {{ t("prompts.filesSelected", fileStore.selectedCount) }}
       </span>
+      <action
+        v-if="selectedBookmark"
+        :disabled="bookmarkSaving"
+        :icon="selectedBookmarkIcon"
+        :label="selectedBookmarkLabel"
+        @action="toggleSelectedBookmark"
+      />
       <action
         v-if="headerButtons.share"
         icon="share"
@@ -302,6 +315,13 @@
             @action="download"
             :counter="fileStore.selectedCount"
           />
+          <action
+            v-if="selectedBookmark"
+            :disabled="bookmarkSaving"
+            :icon="selectedBookmarkIcon"
+            :label="selectedBookmarkLabel"
+            @action="toggleSelectedBookmark"
+          />
           <action icon="info" :label="t('buttons.info')" show="info" />
         </context-menu>
 
@@ -370,6 +390,11 @@ import { useRoute, onBeforeRouteUpdate } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { storeToRefs } from "pinia";
 import { removePrefix } from "@/api/utils";
+import {
+  bookmarkFromResource,
+  isBookmarked,
+  useBookmarks,
+} from "@/utils/bookmarks";
 
 const showLimit = ref<number>(50);
 const columnWidth = ref<number>(280);
@@ -394,6 +419,7 @@ onBeforeRouteUpdate(() => {
 });
 
 const { t } = useI18n();
+const { bookmarks, saving: bookmarkSaving, toggleBookmark } = useBookmarks();
 
 const listing = ref<HTMLElement | null>(null);
 
@@ -488,6 +514,58 @@ const headerButtons = computed(() => {
     copy: fileStore.selectedCount > 0 && authStore.user?.perm.create,
   };
 });
+
+const currentBookmark = computed<IBookmark | null>(() => {
+  if (!fileStore.req) {
+    return null;
+  }
+  return bookmarkFromResource(fileStore.req);
+});
+
+const selectedBookmark = computed<IBookmark | null>(() => {
+  if (fileStore.selectedCount !== 1 || !fileStore.req) {
+    return null;
+  }
+
+  const item = fileStore.req.items[fileStore.selected[0]];
+  if (!item) {
+    return null;
+  }
+
+  return bookmarkFromResource(item);
+});
+
+const currentIsBookmarked = computed(
+  () =>
+    currentBookmark.value !== null &&
+    isBookmarked(bookmarks.value, currentBookmark.value)
+);
+
+const selectedIsBookmarked = computed(
+  () =>
+    selectedBookmark.value !== null &&
+    isBookmarked(bookmarks.value, selectedBookmark.value)
+);
+
+const currentBookmarkIcon = computed(() =>
+  currentIsBookmarked.value ? "star" : "star_border"
+);
+
+const selectedBookmarkIcon = computed(() =>
+  selectedIsBookmarked.value ? "star" : "star_border"
+);
+
+const currentBookmarkLabel = computed(() =>
+  currentIsBookmarked.value
+    ? t("buttons.removeBookmark")
+    : t("buttons.addBookmark")
+);
+
+const selectedBookmarkLabel = computed(() =>
+  selectedIsBookmarked.value
+    ? t("buttons.removeBookmark")
+    : t("buttons.addBookmark")
+);
 
 const isMobile = computed(() => {
   return width.value <= 736;
@@ -953,6 +1031,31 @@ const sort = async (by: string) => {
 
 const openSearch = () => {
   layoutStore.showHover("search");
+};
+
+const toggleCurrentBookmark = async () => {
+  if (!currentBookmark.value) {
+    return;
+  }
+
+  try {
+    await toggleBookmark(currentBookmark.value);
+  } catch (e: any) {
+    $showError(e);
+  }
+};
+
+const toggleSelectedBookmark = async () => {
+  if (!selectedBookmark.value) {
+    return;
+  }
+
+  try {
+    await toggleBookmark(selectedBookmark.value);
+    hideContextMenu();
+  } catch (e: any) {
+    $showError(e);
+  }
 };
 
 const toggleMultipleSelection = () => {

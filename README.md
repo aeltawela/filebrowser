@@ -6,7 +6,9 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/filebrowser/filebrowser/v2)](https://goreportcard.com/report/github.com/filebrowser/filebrowser/v2)
 [![Version](https://img.shields.io/github/release/filebrowser/filebrowser.svg)](https://github.com/filebrowser/filebrowser/releases/latest)
 
-File Browser provides a file managing interface within a specified directory and it can be used to upload, delete, preview and edit your files. It is a **create-your-own-cloud**-kind of software where you can just install it on your server, direct it to a path and access your files through a nice web interface.
+File Browser provides a file managing interface within a specified directory and it can be used to upload, download from links, delete, preview and edit your files. It is a **create-your-own-cloud**-kind of software where you can just install it on your server, direct it to a path and access your files through a nice web interface.
+
+Link downloads can save HTTP(S) files directly into a user's scope. The Docker images include `yt-dlp` so, when an administrator enables link downloads, media-site links can also expose quality options.
 
 ## Documentation
 

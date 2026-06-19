@@ -38,7 +38,7 @@ filebrowser config init [flags]
       --disableExec                      disables Command Runner feature (default true)
       --disableImageResolutionCalc       disables image resolution calculation by reading image files
       --disablePreviewResize             disable resize of image previews
-      --disableThumbnails                disable image thumbnails
+      --disableThumbnails                disable thumbnails
       --disableTypeDetectionByHeader     disables type detection by reading file headers
       --fileMode string                  mode bits that new files are created with (default "0o640")
   -h, --help                             help for init
@@ -73,6 +73,8 @@ filebrowser config init [flags]
       --tokenExpirationTime string       user session timeout (default "2h")
       --tus.chunkSize uint               the tus chunk size (default 10485760)
       --tus.retryCount uint16            the tus retry count (default 5)
+      --videoThumbnailTimeout string     video thumbnail generation timeout (default "30s")
+      --videoThumbnailWorkers int        maximum concurrent video thumbnail generators (default 1)
       --viewMode string                  view mode for users (default "list")
 ```
 
@@ -86,4 +88,3 @@ filebrowser config init [flags]
 ## See Also
 
 * [filebrowser config](filebrowser-config.md)	 - Configuration management utility
-

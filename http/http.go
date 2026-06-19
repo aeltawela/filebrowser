@@ -18,6 +18,7 @@ type modifyRequest struct {
 
 func NewHandler(
 	imgSvc ImgService,
+	videoSvc VideoThumbService,
 	fileCache FileCache,
 	uploadCache UploadCache,
 	store *storage.Storage,
@@ -79,9 +80,18 @@ func NewHandler(
 	api.Handle("/settings", monkey(settingsGetHandler, "")).Methods("GET")
 	api.Handle("/settings", monkey(settingsPutHandler, "")).Methods("PUT")
 
+	linkDownloads := newLinkDownloadManager()
+	api.Handle("/downloads/settings", monkey(linkDownloadSettingsHandler(linkDownloads), "")).Methods("GET")
+	api.Handle("/downloads/ytdlp/update", monkey(linkDownloadYTDLPUpdateHandler(linkDownloads), "")).Methods("POST")
+	api.Handle("/downloads", monkey(linkDownloadListHandler(linkDownloads), "")).Methods("GET")
+	api.Handle("/downloads", monkey(linkDownloadPostHandler(linkDownloads), "")).Methods("POST")
+	api.Handle("/downloads/qualities", monkey(linkDownloadQualitiesHandler(linkDownloads), "")).Methods("GET")
+	api.Handle("/downloads/{id}", monkey(linkDownloadGetHandler(linkDownloads), "")).Methods("GET")
+	api.Handle("/downloads/{id}", monkey(linkDownloadDeleteHandler(linkDownloads), "")).Methods("DELETE")
+
 	api.PathPrefix("/raw").Handler(monkey(rawHandler, "/api/raw")).Methods("GET")
 	api.PathPrefix("/preview/{size}/{path:.*}").
-		Handler(monkey(previewHandler(imgSvc, fileCache, server.EnableThumbnails, server.ResizePreview), "/api/preview")).Methods("GET")
+		Handler(monkey(previewHandler(imgSvc, videoSvc, fileCache, server.EnableThumbnails, server.ResizePreview), "/api/preview")).Methods("GET")
 	api.PathPrefix("/command").Handler(monkey(commandsHandler, "/api/command")).Methods("GET")
 	api.PathPrefix("/search").Handler(monkey(searchHandler, "/api/search")).Methods("GET")
 	api.PathPrefix("/subtitle").Handler(monkey(subtitleHandler, "/api/subtitle")).Methods("GET")

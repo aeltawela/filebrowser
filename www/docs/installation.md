@@ -80,6 +80,86 @@ Both `settings.json` and `filebrowser.db` will automatically be initialized if t
 
 File Browser is now up and running. Read the ["First Boot"](#first-boot) section for more information.
 
+## Video Thumbnails
+
+Video thumbnails are generated when thumbnails are enabled and both `ffmpeg`
+and `ffprobe` are available. The Docker images include these tools, so video
+thumbnails work without adding packages to the container.
+
+Thumbnail generation is cached, limited to one video process at a time by
+default, and each `ffmpeg` process is run with a single worker thread and a
+timeout. These defaults keep folder browsing responsive on constrained devices
+while still generating thumbnails on demand.
+
+For Docker-based setups, keep thumbnails enabled and mount persistent
+configuration, database, and file volumes. Named volumes work well for
+File Browser's own state:
+
+```sh
+docker volume create filebrowser-config
+docker volume create filebrowser-database
+
+docker run \
+  --name filebrowser \
+  -p 8000:80 \
+  -v /path/to/files:/srv \
+  -v filebrowser-config:/config \
+  -v filebrowser-database:/database \
+  filebrowser/filebrowser:latest
+```
+
+If you bind-mount host directories for `/srv`, `/config`, or `/database`, make
+sure they are writable by the container user. The standard image runs as UID
+1000 and GID 1000.
+
+Thumbnails are enabled by default. If a persisted database was previously
+configured with thumbnails disabled, re-enable them with:
+
+```sh
+docker run --rm \
+  -v filebrowser-config:/config \
+  -v filebrowser-database:/database \
+  filebrowser/filebrowser:latest \
+  config set --disableThumbnails=false
+```
+
+For non-Docker deployments, install `ffmpeg` and `ffprobe` on the host. If
+either command is missing, video files continue to work normally and the
+interface falls back to the video file icon. File Browser logs a startup
+warning when thumbnails are enabled but either command is unavailable.
+
+Video thumbnail generation passes the local file path to `ffmpeg`. It works for
+files that are accessible to the File Browser process or container, such as
+local filesystems and bind-mounted Docker paths. Custom or non-local filesystem
+backends that do not expose a local path may not support video thumbnails and
+will fall back to the video icon.
+
+The default limits are suitable for most installs. Larger systems can tune them
+through the persisted server configuration:
+
+```sh
+filebrowser config set \
+  --videoThumbnailWorkers=2 \
+  --videoThumbnailTimeout=45s
+```
+
+Increasing `videoThumbnailWorkers` allows more `ffmpeg` processes to run at the
+same time. Raising `videoThumbnailTimeout` gives slow storage or large files
+more time to produce a thumbnail.
+
+## Link Downloads
+
+Administrators can enable link downloads from the global settings page. When
+enabled, users with create permission can paste an HTTP or HTTPS link and save
+the result into their File Browser scope.
+
+Direct HTTP(S) file downloads work without extra tools. The Docker images
+include `yt-dlp`, so video-site links, quality selection, and audio-only
+downloads work when the feature is enabled. For non-Docker deployments, install
+`yt-dlp` where the File Browser process can execute it and set the `yt-dlp`
+path in global settings. If the downloader mode is set to auto and `yt-dlp` is
+unavailable, File Browser falls back to a direct HTTP(S) download.
+
 ## First Boot
 
 Your instance is now up and running. File Browser will automatically bootstrap a database, in which the configuration and the users are stored. You can find the address in which your instance is running, as well as the randomly generated password for the user `admin`, in the console logs.

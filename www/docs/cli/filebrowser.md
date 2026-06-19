@@ -59,7 +59,7 @@ filebrowser [flags]
       --disableExec                    disables Command Runner feature (default true)
       --disableImageResolutionCalc     disables image resolution calculation by reading image files
       --disablePreviewResize           disable resize of image previews
-      --disableThumbnails              disable image thumbnails
+      --disableThumbnails              disable thumbnails
       --disableTypeDetectionByHeader   disables type detection by reading file headers
   -h, --help                           help for filebrowser
       --imageProcessors int            image processors count (default 4)
@@ -74,6 +74,8 @@ filebrowser [flags]
       --socketPerm uint32              unix socket file permissions (default 438)
       --tokenExpirationTime string     user session timeout (default "2h")
       --username string                username for the first user when using quick setup (default "admin")
+      --videoThumbnailTimeout string   video thumbnail generation timeout (default "30s")
+      --videoThumbnailWorkers int      maximum concurrent video thumbnail generators (default 1)
 ```
 
 ## See Also
@@ -85,4 +87,3 @@ filebrowser [flags]
 * [filebrowser rules](filebrowser-rules.md)	 - Rules management utility
 * [filebrowser users](filebrowser-users.md)	 - Users management utility
 * [filebrowser version](filebrowser-version.md)	 - Print the version number
-

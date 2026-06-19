@@ -31,6 +31,7 @@ type Settings struct {
 	LogoutPage            string              `json:"logoutPage"`
 	Branding              Branding            `json:"branding"`
 	Tus                   Tus                 `json:"tus"`
+	LinkDownload          LinkDownload        `json:"linkDownload"`
 	Commands              map[string][]string `json:"commands"`
 	Shell                 []string            `json:"shell"`
 	Rules                 []rules.Rule        `json:"rules"`
@@ -62,6 +63,8 @@ type Server struct {
 	ImageResolutionCal    bool   `json:"imageResolutionCalculation"`
 	AuthHook              string `json:"authHook"`
 	TokenExpirationTime   string `json:"tokenExpirationTime"`
+	VideoThumbnailWorkers int    `json:"videoThumbnailWorkers"`
+	VideoThumbnailTimeout string `json:"videoThumbnailTimeout"`
 }
 
 // Clean cleans any variables that might need cleaning.
@@ -77,6 +80,30 @@ func (s *Server) GetTokenExpirationTime(fallback time.Duration) time.Duration {
 	duration, err := time.ParseDuration(s.TokenExpirationTime)
 	if err != nil {
 		log.Printf("[WARN] Failed to parse tokenExpirationTime: %v", err)
+		return fallback
+	}
+	return duration
+}
+
+func (s *Server) GetVideoThumbnailWorkers(fallback int) int {
+	if s.VideoThumbnailWorkers <= 0 {
+		return fallback
+	}
+	return s.VideoThumbnailWorkers
+}
+
+func (s *Server) GetVideoThumbnailTimeout(fallback time.Duration) time.Duration {
+	if s.VideoThumbnailTimeout == "" {
+		return fallback
+	}
+
+	duration, err := time.ParseDuration(s.VideoThumbnailTimeout)
+	if err != nil {
+		log.Printf("[WARN] Failed to parse videoThumbnailTimeout: %v", err)
+		return fallback
+	}
+	if duration <= 0 {
+		log.Printf("[WARN] videoThumbnailTimeout must be greater than 0")
 		return fallback
 	}
 	return duration
