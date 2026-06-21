@@ -6,7 +6,7 @@
     @mousemove="toggleNavigation"
     @touchstart="toggleNavigation"
   >
-    <header-bar v-if="isPdf || isEpub || isCsv || showNav">
+    <header-bar v-if="isPdf || isEpub || isCsv || isHtmlPreview || showNav">
       <action icon="close" :label="$t('buttons.close')" @action="close()" />
       <title>{{ name }}</title>
       <action
@@ -32,7 +32,7 @@
         />
         <action
           :disabled="layoutStore.loading"
-          v-if="isCsv && authStore.user?.perm.modify"
+          v-if="(isCsv || isHtmlPreview) && authStore.user?.perm.modify"
           icon="edit_note"
           :label="t('buttons.editAsText')"
           @action="editAsText"
@@ -131,6 +131,12 @@
         >
         </VideoPlayer>
         <object v-else-if="isPdf" class="pdf" :data="previewUrl"></object>
+        <iframe
+          v-else-if="isHtmlPreview"
+          class="html-preview"
+          :src="previewUrl"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
+        ></iframe>
         <div v-else-if="fileStore.req?.type == 'blob'" class="info">
           <div class="title">
             <i class="material-icons">feedback</i>
@@ -192,7 +198,7 @@ import { useLayoutStore } from "@/stores/layout";
 
 import { files as api } from "@/api";
 import { createURL } from "@/api/utils";
-import { resizePreview } from "@/utils/constants";
+import { htmlPreview, resizePreview } from "@/utils/constants";
 import url from "@/utils/url";
 import { throttle } from "lodash-es";
 import HeaderBar from "@/components/header/HeaderBar.vue";
@@ -315,6 +321,10 @@ const previewUrl = computed(() => {
     return createURL("api/raw" + fileStore.req.path, {});
   }
 
+  if (isHtmlPreview.value) {
+    return api.getHTMLPreviewURL(fileStore.req);
+  }
+
   return api.getDownloadURL(fileStore.req, true);
 });
 
@@ -326,6 +336,12 @@ const isCsv = computed(
   () =>
     fileStore.req?.extension.toLowerCase() == ".csv" &&
     fileStore.req.size <= CSV_MAX_SIZE
+);
+const isHtmlFile = computed(() =>
+  [".html", ".htm"].includes(fileStore.req?.extension.toLowerCase() || "")
+);
+const isHtmlPreview = computed(
+  () => htmlPreview && isHtmlFile.value && route.query.preview === "html"
 );
 
 const isResizeEnabled = computed(() => resizePreview);
@@ -439,7 +455,7 @@ const updatePreview = async () => {
     autoPlay.value = false;
   }
 
-  const dirs = route.fullPath.split("/");
+  const dirs = route.path.split("/");
   name.value = decodeURIComponent(dirs[dirs.length - 1]);
 
   // Load CSV content if it's a CSV file
@@ -542,6 +558,10 @@ const download = () => window.open(downloadUrl.value);
 const openDirect = () => window.open(directUrl.value);
 
 const editAsText = () => {
-  router.push({ path: route.path, query: { edit: "true" } });
+  router.push(
+    isHtmlPreview.value
+      ? { path: route.path }
+      : { path: route.path, query: { edit: "true" } }
+  );
 };
 </script>

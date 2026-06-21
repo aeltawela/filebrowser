@@ -32,6 +32,7 @@ type Settings struct {
 	Branding              Branding            `json:"branding"`
 	Tus                   Tus                 `json:"tus"`
 	LinkDownload          LinkDownload        `json:"linkDownload"`
+	HTMLPreview           bool                `json:"htmlPreview"`
 	Commands              map[string][]string `json:"commands"`
 	Shell                 []string            `json:"shell"`
 	Rules                 []rules.Rule        `json:"rules"`

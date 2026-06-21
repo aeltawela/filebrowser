@@ -44,7 +44,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import FileListing from "@/views/files/FileListing.vue";
 import { StatusError } from "@/api/utils";
-import { name } from "../utils/constants";
+import { htmlPreview, name } from "../utils/constants";
 
 const Editor = defineAsyncComponent(() => import("@/views/files/Editor.vue"));
 const Preview = defineAsyncComponent(() => import("@/views/files/Preview.vue"));
@@ -74,6 +74,12 @@ const currentView = computed(() => {
     if (route.query.edit === "true") {
       return Editor;
     }
+    return Preview;
+  } else if (
+    htmlPreview &&
+    [".html", ".htm"].includes(fileStore.req.extension.toLowerCase()) &&
+    route.query.preview === "html"
+  ) {
     return Preview;
   } else if (
     fileStore.req.type === "text" ||

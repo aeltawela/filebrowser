@@ -20,6 +20,7 @@ type settingsData struct {
 	Branding              settings.Branding     `json:"branding"`
 	Tus                   settings.Tus          `json:"tus"`
 	LinkDownload          settings.LinkDownload `json:"linkDownload"`
+	HTMLPreview           bool                  `json:"htmlPreview"`
 	Shell                 []string              `json:"shell"`
 	Commands              map[string][]string   `json:"commands"`
 }
@@ -37,6 +38,7 @@ var settingsGetHandler = withAdmin(func(w http.ResponseWriter, r *http.Request, 
 		Branding:              d.settings.Branding,
 		Tus:                   d.settings.Tus,
 		LinkDownload:          d.settings.LinkDownload,
+		HTMLPreview:           d.settings.HTMLPreview,
 		Shell:                 d.settings.Shell,
 		Commands:              d.settings.Commands,
 	}
@@ -60,6 +62,7 @@ var settingsPutHandler = withAdmin(func(_ http.ResponseWriter, r *http.Request, 
 	d.settings.Branding = req.Branding
 	d.settings.Tus = req.Tus
 	d.settings.LinkDownload = req.LinkDownload
+	d.settings.HTMLPreview = req.HTMLPreview
 	d.settings.Shell = req.Shell
 	d.settings.Commands = req.Commands
 	d.settings.HideLoginButton = req.HideLoginButton

@@ -37,6 +37,13 @@
         @action="preview()"
         v-show="isMarkdownFile"
       />
+
+      <action
+        icon="web_asset"
+        :label="t('buttons.previewHTML')"
+        @action="previewHTML()"
+        v-show="isHTMLPreviewAvailable"
+      />
     </header-bar>
 
     <!-- preview container -->
@@ -99,6 +106,7 @@ import HeaderBar from "@/components/header/HeaderBar.vue";
 import { useAuthStore } from "@/stores/auth";
 import { useFileStore } from "@/stores/file";
 import { useLayoutStore } from "@/stores/layout";
+import { htmlPreview } from "@/utils/constants";
 import { getEditorTheme } from "@/utils/theme";
 import { marked } from "marked";
 import markedKatex from "marked-katex-extension";
@@ -139,6 +147,10 @@ const previewContent = ref("");
 const isMarkdownFile =
   fileStore.req?.name.endsWith(".md") ||
   fileStore.req?.name.endsWith(".markdown");
+const isHTMLFile = [".html", ".htm"].includes(
+  fileStore.req?.extension.toLowerCase() || ""
+);
+const isHTMLPreviewAvailable = htmlPreview && isHTMLFile;
 const katexOptions = {
   output: "mathml" as const,
   throwOnError: false,
@@ -375,6 +387,10 @@ const finishClose = () => {
 
 const preview = () => {
   isPreview.value = !isPreview.value;
+};
+
+const previewHTML = () => {
+  router.push({ path: route.path, query: { preview: "html" } });
 };
 </script>
 

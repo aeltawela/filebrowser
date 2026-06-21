@@ -90,6 +90,7 @@ func NewHandler(
 	api.Handle("/downloads/{id}", monkey(linkDownloadDeleteHandler(linkDownloads), "")).Methods("DELETE")
 
 	api.PathPrefix("/raw").Handler(monkey(rawHandler, "/api/raw")).Methods("GET")
+	api.PathPrefix("/html-preview").Handler(monkey(htmlPreviewHandler, "/api/html-preview")).Methods("GET")
 	api.PathPrefix("/preview/{size}/{path:.*}").
 		Handler(monkey(previewHandler(imgSvc, videoSvc, fileCache, server.EnableThumbnails, server.ResizePreview), "/api/preview")).Methods("GET")
 	api.PathPrefix("/command").Handler(monkey(commandsHandler, "/api/command")).Methods("GET")
