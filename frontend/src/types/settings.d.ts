@@ -10,6 +10,7 @@ interface ISettings {
   branding: SettingsBranding;
   tus: SettingsTus;
   linkDownload: SettingsLinkDownload;
+  htmlPreview: boolean;
   shell: string[];
   commands: SettingsCommand;
 }

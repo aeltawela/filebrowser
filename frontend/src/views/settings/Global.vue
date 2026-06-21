@@ -271,6 +271,19 @@
             class="small link-download-ytdlp-output"
             >{{ ytdlpUpdateOutput }}</pre
           >
+
+          <h3>{{ t("settings.previews") }}</h3>
+          <p>
+            <input
+              type="checkbox"
+              v-model="settings.htmlPreview"
+              id="html-preview-enabled"
+            />
+            {{ t("settings.htmlPreview") }}
+          </p>
+          <p class="small setting-warning">
+            {{ t("settings.htmlPreviewWarning") }}
+          </p>
         </div>
 
         <div class="card-action">
@@ -370,7 +383,7 @@ import Rules from "@/components/settings/Rules.vue";
 import Themes from "@/components/settings/Themes.vue";
 import UserForm from "@/components/settings/UserForm.vue";
 import { useLayoutStore } from "@/stores/layout";
-import { enableExec } from "@/utils/constants";
+import { enableExec, setHTMLPreview } from "@/utils/constants";
 import { getTheme, setTheme } from "@/utils/theme";
 import Errors from "@/views/Errors.vue";
 import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
@@ -506,6 +519,7 @@ const save = async () => {
 
   try {
     await api.update(newSettings);
+    setHTMLPreview(newSettings.htmlPreview);
     $showSuccess(t("settings.settingsUpdated"));
     return true;
   } catch (e: any) {
@@ -582,6 +596,7 @@ onMounted(async () => {
     const original: ISettings = await api.get();
     const newSettings: ISettings = {
       ...original,
+      htmlPreview: original.htmlPreview ?? false,
       linkDownload: {
         ...defaultLinkDownloadSettings,
         ...original.linkDownload,
@@ -630,5 +645,10 @@ onBeforeUnmount(() => {
   max-height: 12em;
   overflow: auto;
   white-space: pre-wrap;
+}
+
+.setting-warning {
+  border-left: 3px solid var(--red);
+  padding-left: 0.75em;
 }
 </style>

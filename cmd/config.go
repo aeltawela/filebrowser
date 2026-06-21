@@ -206,6 +206,7 @@ func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Aut
 	fmt.Fprintf(w, "Logout Page:\t%s\n", set.LogoutPage)
 	fmt.Fprintf(w, "Minimum Password Length:\t%d\n", set.MinimumPasswordLength)
 	fmt.Fprintf(w, "Auth Method:\t%s\n", set.AuthMethod)
+	fmt.Fprintf(w, "HTML Preview:\t%t\n", set.HTMLPreview)
 	fmt.Fprintf(w, "Shell:\t%s\t\n", strings.Join(set.Shell, " "))
 
 	fmt.Fprintln(w, "\nBranding:")

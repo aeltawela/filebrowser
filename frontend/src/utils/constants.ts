@@ -20,6 +20,12 @@ const tusSettings = window.FileBrowser.TusSettings;
 const origin = window.location.origin;
 const tusEndpoint = `/api/tus`;
 const hideLoginButton = window.FileBrowser.HideLoginButton;
+let htmlPreview: boolean = window.FileBrowser.HTMLPreview;
+
+const setHTMLPreview = (enabled: boolean) => {
+  htmlPreview = enabled;
+  window.FileBrowser.HTMLPreview = enabled;
+};
 
 export {
   name,
@@ -43,4 +49,6 @@ export {
   origin,
   tusEndpoint,
   hideLoginButton,
+  htmlPreview,
+  setHTMLPreview,
 };

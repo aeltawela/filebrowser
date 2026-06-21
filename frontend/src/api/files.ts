@@ -225,6 +225,14 @@ export function getPreviewURL(file: ResourceItem, size: string) {
   return createURL("api/preview/" + size + file.path, params);
 }
 
+export function getHTMLPreviewURL(file: ResourceItem) {
+  const params = {
+    key: Date.parse(file.modified),
+  };
+
+  return createURL("api/html-preview" + file.path, params);
+}
+
 export function getSubtitlesURL(file: ResourceItem) {
   const params = {
     inline: "true",
