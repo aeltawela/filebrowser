@@ -86,7 +86,7 @@ func TestUserPutHandlerAllowsSelfBookmarkUpdate(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
 	}
 
-	user, err := st.Users.Get("", uint(1))
+	user, err := st.Users.Get("", false, uint(1))
 	if err != nil {
 		t.Fatalf("failed to fetch user: %v", err)
 	}
