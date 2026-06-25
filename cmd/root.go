@@ -27,6 +27,7 @@ import (
 	"github.com/filebrowser/filebrowser/v2/frontend"
 	fbhttp "github.com/filebrowser/filebrowser/v2/http"
 	"github.com/filebrowser/filebrowser/v2/img"
+	"github.com/filebrowser/filebrowser/v2/search"
 	"github.com/filebrowser/filebrowser/v2/settings"
 	"github.com/filebrowser/filebrowser/v2/storage"
 	"github.com/filebrowser/filebrowser/v2/thumbnail"
@@ -173,6 +174,13 @@ user created with the credentials from options "username" and "password".`,
 				return fmt.Errorf("can't make directory %s: %w", cacheDir, err)
 			}
 			fileCache = diskcache.New(afero.NewOsFs(), cacheDir)
+			if err := search.SetPersistentDir(filepath.Join(cacheDir, "search-index")); err != nil {
+				return fmt.Errorf("can't initialize search index cache: %w", err)
+			}
+		} else {
+			if err := search.SetPersistentDir(""); err != nil {
+				return fmt.Errorf("can't initialize search index cache: %w", err)
+			}
 		}
 
 		redisCacheURL := v.GetString("redisCacheUrl")

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/filebrowser/filebrowser/v2/files"
+	"github.com/filebrowser/filebrowser/v2/search"
 	"github.com/spf13/afero"
 )
 
@@ -118,6 +119,7 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		}
 
 		w.Header().Set("Location", basePath+"/api/tus"+r.URL.EscapedPath())
+		search.Invalidate(d.user.Fs)
 		return http.StatusCreated, nil
 	})
 }
@@ -267,6 +269,7 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 		}
 
 		cache.Complete(file.RealPath())
+		search.Invalidate(d.user.Fs)
 
 		return http.StatusNoContent, nil
 	})
