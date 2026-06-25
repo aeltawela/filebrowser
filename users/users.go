@@ -33,24 +33,24 @@ type Bookmark struct {
 
 // User describes a user.
 type User struct {
-	ID                    uint            `storm:"id,increment" json:"id"`
-	Username              string          `storm:"unique" json:"username"`
-	Password              string          `json:"password"`
-	Scope                 string          `json:"scope"`
-	Locale                string          `json:"locale"`
-	LockPassword          bool            `json:"lockPassword"`
-	ViewMode              ViewMode        `json:"viewMode"`
-	SingleClick           bool            `json:"singleClick"`
-	RedirectAfterCopyMove bool            `json:"redirectAfterCopyMove"`
-	Perm                  Permissions     `json:"perm"`
-	Commands              []string        `json:"commands"`
-	Sorting               files.Sorting   `json:"sorting"`
-	Fs                    *files.ScopedFs `json:"-" yaml:"-"`
-	Rules                 []rules.Rule    `json:"rules"`
-	HideDotfiles          bool            `json:"hideDotfiles"`
-	DateFormat            bool            `json:"dateFormat"`
-	AceEditorTheme        string          `json:"aceEditorTheme"`
-	Bookmarks             []Bookmark      `json:"bookmarks"`
+	ID                    uint          `storm:"id,increment" json:"id"`
+	Username              string        `storm:"unique" json:"username"`
+	Password              string        `json:"password"`
+	Scope                 string        `json:"scope"`
+	Locale                string        `json:"locale"`
+	LockPassword          bool          `json:"lockPassword"`
+	ViewMode              ViewMode      `json:"viewMode"`
+	SingleClick           bool          `json:"singleClick"`
+	RedirectAfterCopyMove bool          `json:"redirectAfterCopyMove"`
+	Perm                  Permissions   `json:"perm"`
+	Commands              []string      `json:"commands"`
+	Sorting               files.Sorting `json:"sorting"`
+	Fs                    afero.Fs      `json:"-" yaml:"-"`
+	Rules                 []rules.Rule  `json:"rules"`
+	HideDotfiles          bool          `json:"hideDotfiles"`
+	DateFormat            bool          `json:"dateFormat"`
+	AceEditorTheme        string        `json:"aceEditorTheme"`
+	Bookmarks             []Bookmark    `json:"bookmarks"`
 }
 
 // GetRules implements rules.Provider.
@@ -71,7 +71,7 @@ var checkableFields = []string{
 
 // Clean cleans up a user and verifies if all its fields
 // are alright to be saved.
-func (u *User) Clean(baseScope string, fields ...string) error {
+func (u *User) Clean(baseScope string, followExternalSymlinks bool, fields ...string) error {
 	if len(fields) == 0 {
 		fields = checkableFields
 	}
@@ -114,7 +114,7 @@ func (u *User) Clean(baseScope string, fields ...string) error {
 	if u.Fs == nil {
 		scope := u.Scope
 		scope = filepath.Join(baseScope, filepath.Join("/", scope))
-		u.Fs = files.NewScopedFs(afero.NewOsFs(), scope)
+		u.Fs = files.NewFs(afero.NewOsFs(), scope, followExternalSymlinks)
 	}
 
 	return nil
@@ -184,5 +184,5 @@ func cleanBookmarkPath(bookmarkPath string) (string, error) {
 
 // FullPath gets the full path for a user's relative path.
 func (u *User) FullPath(path string) string {
-	return afero.FullBaseFsPath(u.Fs.Base(), path)
+	return afero.FullBaseFsPath(files.BasePath(u.Fs), path)
 }

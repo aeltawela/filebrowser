@@ -684,7 +684,14 @@ func realDownloadPath(d *data, scopedPath string) (string, error) {
 		return scopedPath, nil
 	}
 
-	return d.user.Fs.RealPath(scopedPath)
+	realPathFs, ok := d.user.Fs.(interface {
+		RealPath(name string) (string, error)
+	})
+	if !ok {
+		return scopedPath, nil
+	}
+
+	return realPathFs.RealPath(scopedPath)
 }
 
 func escapeYTDLPTemplate(name string) string {
