@@ -154,11 +154,18 @@ enabled, users with create permission can paste an HTTP or HTTPS link and save
 the result into their File Browser scope.
 
 Direct HTTP(S) file downloads work without extra tools. The Docker images
-include `yt-dlp`, so video-site links, quality selection, and audio-only
-downloads work when the feature is enabled. For non-Docker deployments, install
-`yt-dlp` where the File Browser process can execute it and set the `yt-dlp`
-path in global settings. If the downloader mode is set to auto and `yt-dlp` is
-unavailable, File Browser falls back to a direct HTTP(S) download.
+include the latest official `yt-dlp` release available when the image is built,
+so video-site links, quality selection, and audio-only downloads work when the
+feature is enabled. Rebuilding the image refreshes the release even when Docker
+can reuse other build layers. A running container does not update in the
+background; an administrator can use **Update yt-dlp** in global settings or
+pull and deploy a newly built image.
+
+For non-Docker deployments, install `yt-dlp` where the File Browser process can
+execute it and set the `yt-dlp` path in global settings. Package-managed
+installations must be updated through their package manager. If the downloader
+mode is set to auto and `yt-dlp` is unavailable, File Browser falls back to a
+direct HTTP(S) download.
 
 ## First Boot
 
