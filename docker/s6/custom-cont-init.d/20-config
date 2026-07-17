@@ -10,3 +10,7 @@ chown abc:abc \
 	/config/settings.json \
 	/database \
 	/srv
+
+# linuxserver.io remaps abc from the image defaults to PUID/PGID at startup.
+# Keep the self-updating yt-dlp executable writable by that runtime identity.
+chown -R abc:abc /opt/filebrowser/bin
