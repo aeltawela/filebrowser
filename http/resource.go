@@ -18,6 +18,7 @@ import (
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/fileutils"
+	"github.com/filebrowser/filebrowser/v2/search"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/spf13/afero"
 )
@@ -118,6 +119,7 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 			return errToStatus(err), err
 		}
 
+		search.Invalidate(d.user.Fs)
 		return http.StatusNoContent, nil
 	})
 }
@@ -131,6 +133,9 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 		// Directories creation on POST.
 		if strings.HasSuffix(r.URL.Path, "/") {
 			err := d.user.Fs.MkdirAll(r.URL.Path, d.settings.DirMode)
+			if err == nil {
+				search.Invalidate(d.user.Fs)
+			}
 			return errToStatus(err), err
 		}
 
@@ -171,6 +176,8 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 
 		if err != nil {
 			_ = d.user.Fs.RemoveAll(r.URL.Path)
+		} else {
+			search.Invalidate(d.user.Fs)
 		}
 
 		return errToStatus(err), err
@@ -205,6 +212,9 @@ var resourcePutHandler = withUser(func(w http.ResponseWriter, r *http.Request, d
 		w.Header().Set("ETag", etag)
 		return nil
 	}, "save", r.URL.Path, "", d.user)
+	if err == nil {
+		search.Invalidate(d.user.Fs)
+	}
 
 	return errToStatus(err), err
 })
@@ -256,6 +266,9 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 		err = d.RunHook(func() error {
 			return patchAction(r.Context(), action, src, dst, d, fileCache)
 		}, action, src, dst, d.user)
+		if err == nil {
+			search.Invalidate(d.user.Fs)
+		}
 
 		return errToStatus(err), err
 	})

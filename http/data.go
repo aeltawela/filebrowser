@@ -1,6 +1,10 @@
 package fbhttp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"hash"
 	"log"
 	"net/http"
 	gopath "path"
@@ -31,6 +35,32 @@ type data struct {
 	// original scope — are still matched against the real path instead of the
 	// rebased one. Empty for regular requests.
 	checkerPrefix string
+}
+
+// SearchCacheKey identifies the effective rule set used to build a search
+// index. It keeps indexes reusable across requests while avoiding reuse across
+// users or rule changes that would expose or hide different paths.
+func (d *data) SearchCacheKey() string {
+	if d == nil || d.user == nil || d.settings == nil {
+		return ""
+	}
+
+	h := sha256.New()
+	fmt.Fprintf(h, "user:%d\nprefix:%s\nhide:%t\n", d.user.ID, d.checkerPrefix, d.user.HideDotfiles)
+	writeRuleHash(h, "settings", d.settings.Rules)
+	writeRuleHash(h, "user", d.user.Rules)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func writeRuleHash(h hash.Hash, source string, ruleSet []rules.Rule) {
+	fmt.Fprintf(h, "%s:%d\n", source, len(ruleSet))
+	for _, rule := range ruleSet {
+		rawRegexp := ""
+		if rule.Regexp != nil {
+			rawRegexp = rule.Regexp.Raw
+		}
+		fmt.Fprintf(h, "%t:%t:%s:%s\n", rule.Regex, rule.Allow, rule.Path, rawRegexp)
+	}
 }
 
 // Check implements rules.Checker.
