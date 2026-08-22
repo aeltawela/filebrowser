@@ -9,7 +9,9 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
+	"github.com/filebrowser/filebrowser/v2/auth"
 	"github.com/filebrowser/filebrowser/v2/settings"
 )
 
@@ -69,5 +71,27 @@ func TestWarnIfVideoThumbnailsUnavailable(t *testing.T) {
 	warnIfVideoThumbnailsUnavailable(&settings.Server{EnableThumbnails: true}, fakeVideoAvailability{err: errors.New("missing ffmpeg")})
 	if !strings.Contains(buf.String(), "Video thumbnails unavailable") || !strings.Contains(buf.String(), "missing ffmpeg") {
 		t.Fatalf("expected missing-tool warning, got %q", buf.String())
+	}
+}
+
+// TestGetSettingsFollowExternalSymlinks ensures that the followExternalSymlinks
+// flag is persisted to the server config when set via "config set".
+func TestGetSettingsFollowExternalSymlinks(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	addConfigFlags(flags)
+
+	if err := flags.Parse([]string{"--followExternalSymlinks"}); err != nil {
+		t.Fatal(err)
+	}
+
+	set := &settings.Settings{AuthMethod: auth.MethodJSONAuth}
+	ser := &settings.Server{}
+
+	if _, err := getSettings(flags, set, ser, &auth.JSONAuth{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if !ser.FollowExternalSymlinks {
+		t.Error("expected FollowExternalSymlinks to be persisted as true")
 	}
 }

@@ -157,15 +157,16 @@ func (a *HookAuth) SaveUser() (*users.User, error) {
 		}
 		u = a.GetUser(d)
 
-		userHome, err := a.Settings.MakeUserDir(u.Username, u.Scope, a.Server.Root)
+		// A scope explicitly returned by the hook takes precedence over the
+		// automatic per-user home directory derivation.
+		_, explicitScope := a.Fields.Values["user.scope"]
+		derivedScope, err := a.Settings.CreateUserHome(u, a.Server.Root, explicitScope)
 		if err != nil {
-			return nil, fmt.Errorf("user: failed to mkdir user home dir: [%s]", userHome)
+			return nil, err
 		}
-		u.Scope = userHome
-		log.Printf("user: %s, home dir: [%s].", u.Username, userHome)
+		log.Printf("user: %s, home dir: [%s].", u.Username, u.Scope)
 
-		err = a.Users.Save(u)
-		if err != nil {
+		if err := a.Users.SaveProvisioned(u, derivedScope); err != nil {
 			return nil, err
 		}
 	} else if p := !users.CheckPwd(a.Cred.Password, u.Password); len(a.Fields.Values) > 1 || p {
