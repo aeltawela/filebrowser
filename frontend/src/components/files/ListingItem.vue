@@ -29,6 +29,7 @@
         :src="thumbnailUrl"
         loading="lazy"
         @error="thumbnailFailed = true"
+        :alt="name"
       />
       <i v-else class="material-icons"></i>
     </div>

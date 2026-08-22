@@ -151,7 +151,13 @@ type memoryUsersBackend struct {
 }
 
 func (m *memoryUsersBackend) GetBy(interface{}) (*User, error) { return m.user, nil }
-func (m *memoryUsersBackend) Gets() ([]*User, error)           { return []*User{m.user}, nil }
+func (m *memoryUsersBackend) GetByScope(scope string) (*User, error) {
+	if m.user != nil && strings.EqualFold(m.user.Scope, scope) {
+		return m.user, nil
+	}
+	return nil, fberrors.ErrNotExist
+}
+func (m *memoryUsersBackend) Gets() ([]*User, error) { return []*User{m.user}, nil }
 func (m *memoryUsersBackend) Save(user *User) error {
 	m.user = cloneUser(user)
 	return nil

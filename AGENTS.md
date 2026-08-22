@@ -7,10 +7,10 @@ changes.
 
 - Backend: Go module at the repository root.
 - Frontend: Vue/Vite app in `frontend/`.
-- Documentation site: MkDocs content in `www/`.
+- Documentation: Markdown content in `docs/`.
 - Runtime images and container assets: `Dockerfile`, `Dockerfile.s6`,
   `compose.yaml`, and `docker/`.
-- CLI documentation is generated under `www/docs/cli/`.
+- CLI documentation is generated under `docs/cli/`.
 - Generated enum files such as `*_enum.go` should not be edited by hand unless
   regeneration is unavailable and the enum source change is intentionally kept
   in sync.

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -200,6 +201,11 @@ user created with the credentials from options "username" and "password".`,
 			server.GetVideoThumbnailTimeout(thumbnail.DefaultVideoTimeout),
 		)
 		warnIfVideoThumbnailsUnavailable(server, videoThumbService)
+
+		log.Println("NOTICE: The original filebrowser/filebrowser project is being wound down.")
+		log.Println("NOTICE: Its repository is archived on 2026-09-01, with no further upstream")
+		log.Println("NOTICE: releases or security fixes. Known unfixed upstream issues are at")
+		log.Println("NOTICE: https://github.com/filebrowser/filebrowser/security/advisories")
 
 		root, err := filepath.Abs(server.Root)
 		if err != nil {
@@ -416,6 +422,18 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 		log.Println("WARNING: Symlinks pointing outside a user's scope will be followed,")
 		log.Println("WARNING: which can expose files outside that scope. Only enable this if")
 		log.Println("WARNING: you fully understand and trust the contents of every user scope.")
+	}
+
+	if set, err := st.Settings.Get(); err == nil && set.Signup {
+		scope := strings.TrimSpace(set.Defaults.Scope)
+		scopeIsRoot := scope == "" || scope == "." || scope == "/"
+
+		if !set.CreateUserDir && scopeIsRoot {
+			log.Println("WARNING: Signup is enabled without createUserDir and the default scope is")
+			log.Println("WARNING: the server root, so every self-registered user can read, modify and")
+			log.Println("WARNING: delete all files File Browser serves, including other users' files.")
+			log.Println("WARNING: Enable createUserDir, or set a default scope other than the root.")
+		}
 	}
 
 	return server, nil
