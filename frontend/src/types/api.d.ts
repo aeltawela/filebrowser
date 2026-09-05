@@ -55,11 +55,14 @@ interface LinkDownloadYTDLPUpdate {
 }
 
 interface LinkDownloadQualityOption {
+  description?: string;
   label: string;
   quality: string;
 }
 
 interface LinkDownloadQualities {
+  verified: boolean;
+  notice?: string;
   downloader: LinkDownloadDownloader;
   options: LinkDownloadQualityOption[];
   error?: string;

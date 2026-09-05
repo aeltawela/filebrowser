@@ -1,7 +1,7 @@
 package settings
 
 const (
-	DefaultLinkDownloadQuality    = "bestvideo*+bestaudio/best"
+	DefaultLinkDownloadQuality    = "bv*[height>=2160][width>=2160]+ba/b[height>=2160][width>=2160]"
 	DefaultLinkDownloadDownloader = "auto"
 	DefaultLinkDownloadYTDLPPath  = "yt-dlp"
 )
@@ -17,7 +17,7 @@ type LinkDownload struct {
 
 // ApplyDefaults fills missing fields without changing the enabled state.
 func (l *LinkDownload) ApplyDefaults() {
-	if l.DefaultQuality == "" || l.DefaultQuality == "best" {
+	if l.DefaultQuality == "" || l.DefaultQuality == "best" || l.DefaultQuality == "bestvideo*+bestaudio/best" {
 		l.DefaultQuality = DefaultLinkDownloadQuality
 	}
 

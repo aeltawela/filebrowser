@@ -142,3 +142,11 @@ baseline for inherited maintenance and security fixes.
 ## License
 
 [Apache License 2.0](LICENSE) © File Browser Contributors
+
+## Video link download quality
+
+Link downloads default to **4K or better with audio** (at least 2160 pixels on both dimensions). This preset never silently falls back to a lower resolution and never upscales a source. Legacy “best” defaults migrate to this preset; custom defaults remain unchanged. Choose **Highest available** or a specific lower resolution explicitly when a source has no 4K.
+
+Pasting a URL discovers source formats. Choices identify resolution, frame rate, dynamic range, video codec and output container, with audio details and estimated download size when provided by the source. Separate video and audio streams are merged into MKV without re-encoding; player support depends on the original codecs. Exact choices preserve the selected streams and fail if those streams become unavailable. Metadata warnings and unverified fallback presets are identified; a new URL invalidates previous results immediately. Direct file downloads retain their original quality.
+
+Discovery and downloads use the same resolution-first sort and ignore ambient yt-dlp configuration, keeping displayed choices consistent with the requested download. Automatic updates and remote component fetching are explicitly disabled for these operations; the administrator's existing update action remains available. No optional analytics, telemetry, or tracing channel is enabled.
