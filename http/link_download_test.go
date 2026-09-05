@@ -114,28 +114,60 @@ func TestLinkDownloadDirectConflictWithoutOverwrite(t *testing.T) {
 
 func TestQualityOptionsFromFormats(t *testing.T) {
 	options := qualityOptionsFromFormats([]ytDLPFormat{
-		{Height: 720, VCodec: "avc1", ACodec: "none"},
-		{Height: 1080, VCodec: "vp9", ACodec: "none"},
-		{Height: 360, VCodec: "avc1", ACodec: "mp4a"},
-		{VCodec: "none", ACodec: "opus"},
+		{FormatID: "18", Width: 640, Height: 360, VCodec: "avc1", ACodec: "mp4a", Ext: "mp4"},
+		{FormatID: "140", VCodec: "none", ACodec: "mp4a", Ext: "m4a", Filesize: 1000},
+		{FormatID: "401", Width: 3840, Height: 2160, FPS: 60, DynamicRange: "HDR10", VCodec: "av01", ACodec: "none", Ext: "mp4", Filesize: 9000},
 	})
-
-	want := []linkDownloadQualityData{
-		{Label: "Best available", Quality: "bestvideo*+bestaudio/best"},
-		{Label: "1080p", Quality: "bv*[height<=1080]+ba/b[height<=1080]/wv*+ba/w"},
-		{Label: "720p", Quality: "bv*[height<=720]+ba/b[height<=720]/wv*+ba/w"},
-		{Label: "360p", Quality: "bv*[height<=360]+ba/b[height<=360]/wv*+ba/w"},
-		{Label: "Audio only", Quality: "bestaudio/best"},
+	if options[0].Quality != "401+140" {
+		t.Fatal("exact 4K stream must be the source default")
 	}
-
-	if len(options) != len(want) {
-		t.Fatalf("expected %d options, got %d: %+v", len(want), len(options), options)
-	}
-
-	for i := range want {
-		if options[i] != want[i] {
-			t.Fatalf("option %d: expected %+v, got %+v", i, want[i], options[i])
+	var found bool
+	for _, option := range options {
+		if option.Quality == "401+140" {
+			found = true
+			for _, detail := range []string{"4K", "60 fps", "HDR10"} {
+				if !strings.Contains(option.Label, detail) {
+					t.Errorf("missing %q in %q", detail, option.Label)
+				}
+			}
+			if !strings.Contains(option.Description, "Sound: Included") || !strings.Contains(option.Description, "10.0 KB") {
+				t.Errorf("missing merged size/audio explanation: %s", option.Description)
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("missing exact 4K video and audio pair: %+v", options)
+	}
+}
+
+func TestQualityOptionsExcludeDRMButPreserveSilentVideo(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "drm", Width: 3840, Height: 2160, VCodec: "av01", ACodec: "aac", HasDRM: true},
+		{FormatID: "silent", Width: 3840, Height: 2160, VCodec: "av01", ACodec: "none"},
+	})
+	for _, option := range options {
+		if strings.Contains(option.Quality, "drm") {
+			t.Fatalf("unusable option: %+v", option)
+		}
+	}
+}
+
+func TestQualityOptionsPreserveDifferentFrameRatesAndPortraitResolution(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "p30", Width: 1080, Height: 1920, FPS: 30, VCodec: "avc1", ACodec: "aac", Ext: "mp4"},
+		{FormatID: "p60", Width: 1080, Height: 1920, FPS: 60, VCodec: "avc1", ACodec: "aac", Ext: "mp4"},
+	})
+	count := 0
+	for _, option := range options {
+		if option.Quality == "p30" || option.Quality == "p60" {
+			count++
+			if !strings.Contains(option.Label, "1080p") {
+				t.Fatalf("portrait resolution mislabeled: %s", option.Label)
+			}
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected both frame rates, got %+v", options)
 	}
 }
 
@@ -316,4 +348,64 @@ func waitForLinkDownload(t *testing.T, manager *linkDownloadManager, id string) 
 
 	t.Fatalf("job %q did not finish, last snapshot %+v", id, snapshot)
 	return snapshot
+}
+
+func TestQualityProbeDoesNotBorrowAudioFromLowerMuxedVideo(t *testing.T) {
+	binary := writeYTDLPTestScript(t, `echo '{"formats":[{"format_id":"4k","width":3840,"height":2160,"vcodec":"av01","acodec":"none"},{"format_id":"low","width":1280,"height":720,"vcodec":"avc1","acodec":"aac"}]}'`)
+	result, err := ytDLPQualityOptions(context.Background(), binary, "https://example.com/video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Notice != "" || len(result.Options) != 2 || result.Options[0].Quality != "4k" || !strings.Contains(result.Options[0].Description, "Sound: No audio") {
+		t.Fatalf("misleading availability: %+v", result)
+	}
+}
+
+func TestAutoDownloaderCannotBypassStrictQuality(t *testing.T) {
+	_, err := normalizeLinkDownloadRequest(linkDownloadRequest{URL: "https://example.com/video", Downloader: "auto", Quality: settings.DefaultLinkDownloadQuality}, settings.LinkDownload{YTDLPPath: "/missing/yt-dlp"})
+	if err == nil {
+		t.Fatal("auto downloader must not silently bypass requested video quality")
+	}
+}
+
+func TestQualityOptionsUseReadableCodecFamilies(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "audio", VCodec: "none", ACodec: "mp4a.40.2", Ext: "m4a"},
+		{FormatID: "old", Width: 3840, Height: 2160, FPS: 60, VCodec: "VP09.00.51.08", ACodec: "none", Ext: "webm"},
+		{FormatID: "preferred", Width: 3840, Height: 2160, FPS: 60, VCodec: "vp09.00.51.08", ACodec: "none", Ext: "mp4"},
+	})
+	count := 0
+	for _, option := range options {
+		if strings.HasPrefix(option.Quality, "old+") || strings.HasPrefix(option.Quality, "preferred+") {
+			count++
+			if !strings.HasSuffix(option.Label, "VP9 (8-bit)") || !strings.Contains(option.TechnicalDetails, "AAC audio") {
+				t.Errorf("not human-readable: %+v", option)
+			}
+			if option.Quality != "preferred+audio" {
+				t.Error("must keep the preferred equivalent stream")
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected one equivalent codec choice, got %d", count)
+	}
+}
+
+func TestQualityOptionsRetainCodecProfiles(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "8bit", Width: 3840, Height: 2160, VCodec: "vp09.00.51.08", ACodec: "opus", Ext: "webm"},
+		{FormatID: "10bit", Width: 3840, Height: 2160, VCodec: "vp09.02.51.10", ACodec: "opus", Ext: "webm"},
+	})
+	count := 0
+	for _, o := range options {
+		if o.Quality == "8bit" || o.Quality == "10bit" {
+			if !strings.Contains(o.Label, strings.Replace(o.Quality, "bit", "-bit", 1)) {
+				t.Errorf("missing readable bit depth: %s", o.Label)
+			}
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("profile choices lost: %+v", options)
+	}
 }

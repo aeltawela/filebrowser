@@ -16,7 +16,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,12 +45,14 @@ const (
 var ytDLPProgressPattern = regexp.MustCompile(`(\d+(?:\.\d+)?)%`)
 
 type linkDownloadRequest struct {
-	URL        string `json:"url"`
-	Path       string `json:"path"`
-	Filename   string `json:"filename"`
-	Quality    string `json:"quality"`
-	Downloader string `json:"downloader"`
-	Overwrite  bool   `json:"overwrite"`
+	Container        string `json:"container,omitempty"`
+	SubtitleLanguage string `json:"subtitleLanguage,omitempty"`
+	URL              string `json:"url"`
+	Path             string `json:"path"`
+	Filename         string `json:"filename"`
+	Quality          string `json:"quality"`
+	Downloader       string `json:"downloader"`
+	Overwrite        bool   `json:"overwrite"`
 }
 
 type linkDownloadSettingsData struct {
@@ -68,14 +69,36 @@ type linkDownloadYTDLPUpdateData struct {
 }
 
 type linkDownloadQualityData struct {
-	Label   string `json:"label"`
-	Quality string `json:"quality"`
+	Resolution       int                                 `json:"resolution,omitempty"`
+	Recommended      bool                                `json:"recommended,omitempty"`
+	Advanced         bool                                `json:"advanced,omitempty"`
+	TechnicalDetails string                              `json:"technicalDetails,omitempty"`
+	AudioOnly        bool                                `json:"audioOnly,omitempty"`
+	AudioVariants    map[string]linkDownloadAudioVariant `json:"audioVariants,omitempty"`
+	Label            string                              `json:"label"`
+	Quality          string                              `json:"quality"`
+	Description      string                              `json:"description,omitempty"`
+}
+
+type linkDownloadAudioVariant struct {
+	Quality          string `json:"quality"`
+	Description      string `json:"description"`
+	TechnicalDetails string `json:"technicalDetails,omitempty"`
+}
+
+type linkDownloadSubtitleLanguage struct {
+	Language  string `json:"language"`
+	Automatic bool   `json:"automatic"`
 }
 
 type linkDownloadQualitiesData struct {
-	Downloader string                    `json:"downloader"`
-	Options    []linkDownloadQualityData `json:"options"`
-	Error      string                    `json:"error,omitempty"`
+	AudioLanguages    []string                       `json:"audioLanguages,omitempty"`
+	SubtitleLanguages []linkDownloadSubtitleLanguage `json:"subtitleLanguages,omitempty"`
+	Verified          bool                           `json:"verified"`
+	Notice            string                         `json:"notice,omitempty"`
+	Downloader        string                         `json:"downloader"`
+	Options           []linkDownloadQualityData      `json:"options"`
+	Error             string                         `json:"error,omitempty"`
 }
 
 type linkDownloadJobData struct {
@@ -215,6 +238,14 @@ func linkDownloadQualitiesHandler(_ *linkDownloadManager) handleFunc {
 			})
 		}
 
+		if downloader == linkDownloaderDirect && requestedDownloader == linkDownloaderAuto {
+			return renderJSON(w, r, linkDownloadQualitiesData{
+				Downloader: linkDownloaderAuto,
+				Options:    defaultLinkDownloadQualities(linkDownloaderAuto),
+				Error:      "yt-dlp is unavailable. Video quality cannot be enforced; select Direct explicitly to download the original file.",
+			})
+		}
+
 		if downloader != linkDownloaderYTDLP {
 			return renderJSON(w, r, linkDownloadQualitiesData{
 				Downloader: downloader,
@@ -225,7 +256,7 @@ func linkDownloadQualitiesHandler(_ *linkDownloadManager) handleFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 
-		options, err := ytDLPQualityOptions(ctx, cfg.YTDLPPath, rawURL)
+		result, err := ytDLPQualityOptions(ctx, cfg.YTDLPPath, rawURL)
 		if err != nil {
 			return renderJSON(w, r, linkDownloadQualitiesData{
 				Downloader: downloader,
@@ -234,10 +265,8 @@ func linkDownloadQualitiesHandler(_ *linkDownloadManager) handleFunc {
 			})
 		}
 
-		return renderJSON(w, r, linkDownloadQualitiesData{
-			Downloader: downloader,
-			Options:    options,
-		})
+		result.Downloader = downloader
+		return renderJSON(w, r, result)
 	})
 }
 
@@ -322,12 +351,28 @@ func normalizeLinkDownloadRequest(req linkDownloadRequest, cfg settings.LinkDown
 
 	req.Path = cleanLinkDownloadPath(firstNonEmpty(req.Path, cfg.DefaultPath, "/"))
 
+	originalQuality := strings.TrimSpace(req.Quality)
 	req.Quality = strings.TrimSpace(firstNonEmpty(req.Quality, cfg.DefaultQuality, settings.DefaultLinkDownloadQuality))
 	req.Downloader = strings.TrimSpace(firstNonEmpty(req.Downloader, cfg.Downloader, settings.DefaultLinkDownloadDownloader))
 	switch req.Downloader {
 	case linkDownloaderAuto, linkDownloaderDirect, linkDownloaderYTDLP:
 	default:
 		return req, fmt.Errorf("unsupported downloader %q: %w", req.Downloader, fberrors.ErrInvalidRequestParams)
+	}
+
+	if err := validateLinkDownloadMediaOptions(req); err != nil {
+		return req, err
+	}
+
+	if req.Downloader == linkDownloaderDirect {
+		if originalQuality == "" {
+			req.Quality = "best"
+		}
+		if req.Quality != "best" {
+			return req, fmt.Errorf("direct downloads cannot enforce video quality; choose Original file explicitly")
+		}
+	} else if (req.Quality != "best" || req.Container != "" || req.SubtitleLanguage != "") && !ytDLPAvailable(cfg.YTDLPPath) {
+		return req, fmt.Errorf("yt-dlp is required to enforce video quality and media options; no direct fallback was used")
 	}
 
 	if req.Filename != "" {
@@ -404,9 +449,12 @@ func (m *linkDownloadManager) run(ctx context.Context, d *data, job *linkDownloa
 	}
 	job.setDownloader(downloader)
 
-	if downloader == linkDownloaderYTDLP {
+	switch {
+	case downloader == linkDownloaderYTDLP:
 		err = m.downloadWithYTDLP(ctx, d, job, req)
-	} else {
+	case req.Quality != "best":
+		err = fmt.Errorf("yt-dlp is required to enforce video quality and media options; no direct fallback was used")
+	default:
 		err = m.downloadDirect(ctx, d, job, req)
 	}
 
@@ -444,94 +492,6 @@ func ytDLPAvailable(binary string) bool {
 	}
 	_, err := exec.LookPath(binary)
 	return err == nil
-}
-
-func defaultLinkDownloadQualities(downloader string) []linkDownloadQualityData {
-	if downloader == linkDownloaderDirect {
-		return []linkDownloadQualityData{
-			{Label: "Original file", Quality: "best"},
-		}
-	}
-
-	return []linkDownloadQualityData{
-		{Label: "Best available", Quality: settings.DefaultLinkDownloadQuality},
-		{Label: "1080p", Quality: heightLimitedFormatSelector(1080)},
-		{Label: "720p", Quality: heightLimitedFormatSelector(720)},
-		{Label: "Audio only", Quality: "bestaudio/best"},
-	}
-}
-
-type ytDLPMetadata struct {
-	Formats []ytDLPFormat `json:"formats"`
-}
-
-type ytDLPFormat struct {
-	Height int    `json:"height"`
-	VCodec string `json:"vcodec"`
-	ACodec string `json:"acodec"`
-}
-
-func ytDLPQualityOptions(ctx context.Context, binary, rawURL string) ([]linkDownloadQualityData, error) {
-	cmd := exec.CommandContext(ctx, binary, "--dump-single-json", "--no-playlist", "--no-warnings", "--skip-download", rawURL)
-	output, err := cmd.Output()
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("yt-dlp could not read available qualities")
-	}
-
-	metadata := ytDLPMetadata{}
-	if err := json.Unmarshal(output, &metadata); err != nil {
-		return nil, fmt.Errorf("yt-dlp returned invalid format metadata")
-	}
-
-	return qualityOptionsFromFormats(metadata.Formats), nil
-}
-
-func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData {
-	options := []linkDownloadQualityData{
-		{Label: "Best available", Quality: settings.DefaultLinkDownloadQuality},
-	}
-
-	heights := map[int]struct{}{}
-	hasAudio := false
-	for _, format := range formats {
-		if format.ACodec != "" && format.ACodec != "none" {
-			hasAudio = true
-		}
-
-		if format.Height <= 0 || format.VCodec == "none" {
-			continue
-		}
-		heights[format.Height] = struct{}{}
-	}
-
-	sortedHeights := make([]int, 0, len(heights))
-	for height := range heights {
-		sortedHeights = append(sortedHeights, height)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sortedHeights)))
-
-	for _, height := range sortedHeights {
-		options = append(options, linkDownloadQualityData{
-			Label:   fmt.Sprintf("%dp", height),
-			Quality: heightLimitedFormatSelector(height),
-		})
-	}
-
-	if hasAudio {
-		options = append(options, linkDownloadQualityData{
-			Label:   "Audio only",
-			Quality: "bestaudio/best",
-		})
-	}
-
-	return options
-}
-
-func heightLimitedFormatSelector(height int) string {
-	return fmt.Sprintf("bv*[height<=%d]+ba/b[height<=%d]/wv*+ba/w", height, height)
 }
 
 func (m *linkDownloadManager) downloadDirect(ctx context.Context, d *data, job *linkDownloadJob, req linkDownloadRequest) error {
@@ -651,28 +611,7 @@ func (m *linkDownloadManager) downloadWithYTDLP(ctx context.Context, d *data, jo
 		return err
 	}
 
-	outputTemplate := "%(title).200B.%(ext)s"
-	if req.Filename != "" {
-		outputTemplate = escapeYTDLPTemplate(req.Filename)
-		if filepath.Ext(req.Filename) == "" {
-			outputTemplate += ".%(ext)s"
-		}
-	}
-
-	args := []string{
-		"--newline",
-		"--no-playlist",
-		"-f", req.Quality,
-		"-o", filepath.Join(realDir, outputTemplate),
-	}
-
-	if req.Overwrite {
-		args = append(args, "--force-overwrites")
-	} else {
-		args = append(args, "--no-overwrites")
-	}
-
-	args = append(args, req.URL)
+	args := ytDLPDownloadArgs(req, realDir)
 
 	return d.RunHook(func() error {
 		return runYTDLP(ctx, d.settings.LinkDownload.YTDLPPath, args, job)
