@@ -187,8 +187,11 @@
               v-model="defaultQualityPreset"
               id="link-downloads-default-quality"
             >
-              <option value="bestvideo*+bestaudio/best">
-                {{ t("linkDownload.qualityBest") }}
+              <option :value="defaultVideoQuality">
+                {{ qualityText("quality4K") }}
+              </option>
+              <option value="bv*+ba/b">
+                {{ qualityText("qualityHighest") }}
               </option>
               <option value="bv*[height<=1080]+ba/b[height<=1080]/wv*+ba/w">
                 {{ t("linkDownload.quality1080") }}
@@ -388,6 +391,10 @@ import { getTheme, setTheme } from "@/utils/theme";
 import Errors from "@/views/Errors.vue";
 import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import {
+  defaultVideoQuality,
+  qualityMessages,
+} from "@/utils/download-qualities";
 
 const error = ref<StatusError | null>(null);
 const originalSettings = ref<ISettings | null>(null);
@@ -405,13 +412,14 @@ const shellValue = ref<string>("");
 const defaultLinkDownloadSettings: SettingsLinkDownload = {
   enabled: false,
   defaultPath: "",
-  defaultQuality: "bestvideo*+bestaudio/best",
+  defaultQuality: defaultVideoQuality,
   downloader: "auto",
   ytdlpPath: "yt-dlp",
 };
 
 const defaultQualityPresetValues = new Set([
-  "bestvideo*+bestaudio/best",
+  defaultVideoQuality,
+  "bv*+ba/b",
   "bv*[height<=1080]+ba/b[height<=1080]/wv*+ba/w",
   "bv*[height<=720]+ba/b[height<=720]/wv*+ba/w",
   "bestaudio/best",
@@ -421,6 +429,10 @@ const $showError = inject<IToastError>("$showError")!;
 const $showSuccess = inject<IToastSuccess>("$showSuccess")!;
 
 const { t } = useI18n();
+const { t: qualityText } = useI18n({
+  useScope: "local",
+  messages: qualityMessages,
+});
 
 const layoutStore = useLayoutStore();
 const defaultQualityCustomMode = ref(false);
@@ -430,8 +442,7 @@ const defaultQualityPreset = computed({
     if (defaultQualityCustomMode.value) return "custom";
 
     const quality =
-      settings.value?.linkDownload.defaultQuality ||
-      "bestvideo*+bestaudio/best";
+      settings.value?.linkDownload.defaultQuality || defaultVideoQuality;
     return defaultQualityPresetValues.has(quality) ? quality : "custom";
   },
   set(value: string) {

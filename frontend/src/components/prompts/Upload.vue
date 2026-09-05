@@ -97,7 +97,7 @@
             >
               {{ option.label }}
             </option>
-            <option value="custom">
+            <option v-if="!isDirectDownload" value="custom">
               {{ t("linkDownload.qualityCustom") }}
             </option>
           </select>
@@ -112,7 +112,28 @@
           <span v-if="selectedQuality === 'custom'" class="small">
             {{ t("linkDownload.formatSelectorHelp") }}
           </span>
-          <span v-if="loadingQualityOptions" class="small">
+          <span v-if="selectedDescription" class="small">{{
+            selectedDescription
+          }}</span>
+          <span v-if="qualityResult?.notice" class="small" role="status">{{
+            qualityResult.notice
+          }}</span>
+          <span
+            v-if="!loadingQualityOptions && !isDirectDownload"
+            class="small"
+            role="status"
+          >
+            {{
+              qualityText(
+                qualityResult?.downloader === "direct"
+                  ? "qualityUnavailable"
+                  : qualityResult?.verified
+                    ? "qualityVerified"
+                    : "qualityFallback"
+              )
+            }}
+          </span>
+          <span v-if="loadingQualityOptions" class="small" role="status">
             {{ t("linkDownload.loadingQualities") }}
           </span>
           <span v-else-if="qualityOptionsError" class="small">
@@ -182,7 +203,9 @@
         <input
           class="button button--flat"
           type="submit"
-          :disabled="submitting || (!!job && !isTerminal)"
+          :disabled="
+            submitting || loadingQualityOptions || (!!job && !isTerminal)
+          "
           :value="t('buttons.downloadFromLink')"
         />
       </div>
@@ -211,8 +234,18 @@ import { useLayoutStore } from "@/stores/layout";
 
 import * as upload from "@/utils/upload";
 import buttons from "@/utils/buttons";
+import {
+  defaultVideoQuality,
+  qualityMessages,
+  useDownloadQualities,
+  resolveDownloadQualityOptions,
+} from "@/utils/download-qualities";
 
 const { t } = useI18n();
+const { t: qualityText } = useI18n({
+  useScope: "local",
+  messages: qualityMessages,
+});
 const route = useRoute();
 
 const layoutStore = useLayoutStore();
@@ -228,14 +261,21 @@ const submitting = ref(false);
 const job = ref<LinkDownloadJob | null>(null);
 const pollTimer = ref<number | null>(null);
 const qualityOptions = ref<LinkDownloadQualityOption[]>([]);
-const defaultQuality = "bestvideo*+bestaudio/best";
+const defaultQuality = defaultVideoQuality;
 const selectedQuality = ref(defaultQuality);
 const lastPresetQuality = ref(defaultQuality);
 const customQuality = ref("");
-const loadingQualityOptions = ref(false);
-const qualityOptionsError = ref("");
+const discovery = useDownloadQualities();
+const loadingQualityOptions = discovery.loading;
+const qualityOptionsError = discovery.error;
+const qualityResult = discovery.result;
+const selectedDescription = computed(
+  () =>
+    qualityOptions.value.find(
+      (option) => option.quality === selectedQuality.value
+    )?.description
+);
 const qualityFetchTimer = ref<number | null>(null);
-const qualityFetchSerial = ref(0);
 
 const linkForm = reactive<LinkDownloadRequest>({
   url: "",
@@ -246,12 +286,29 @@ const linkForm = reactive<LinkDownloadRequest>({
   overwrite: false,
 });
 
-const defaultQualityOptions = (): LinkDownloadQualityOption[] => [
-  {
-    label: t("linkDownload.qualityBest"),
-    quality: defaultQuality,
-  },
-];
+const isDirectDownload = computed(() => linkForm.downloader === "direct");
+const defaultQualityOptions = (): LinkDownloadQualityOption[] =>
+  resolveDownloadQualityOptions(
+    linkForm.downloader,
+    qualityResult.value,
+    [
+      {
+        label: qualityText("quality4K"),
+        quality: defaultQuality,
+        description: qualityText("quality4KHelp"),
+      },
+      {
+        label: qualityText("qualityHighest"),
+        quality: "bv*+ba/b",
+        description: qualityText("qualityHighestHelp"),
+      },
+    ],
+    {
+      label: qualityText("qualityOriginal"),
+      quality: "best",
+      description: qualityText("qualityOriginalHelp"),
+    }
+  );
 
 const isTerminal = computed(() => {
   return (
@@ -282,11 +339,16 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopPolling();
   stopQualityOptionsTimer();
+  discovery.invalidate();
 });
 
-watch([() => linkForm.url, () => linkForm.downloader], () => {
-  scheduleQualityOptionsLoad();
-});
+watch(
+  [() => linkForm.url, () => linkForm.downloader],
+  () => {
+    scheduleQualityOptionsLoad();
+  },
+  { flush: "sync" }
+);
 
 watch(selectedQuality, (quality, previousQuality) => {
   if (quality === "custom") {
@@ -408,6 +470,7 @@ const openLinkDownload = async () => {
 };
 
 const setQuality = (quality: string) => {
+  if (isDirectDownload.value) quality = "best";
   if (qualityOptions.value.some((option) => option.quality === quality)) {
     selectedQuality.value = quality;
     customQuality.value = "";
@@ -437,57 +500,30 @@ const hasValidLink = () => {
 
 const scheduleQualityOptionsLoad = () => {
   stopQualityOptionsTimer();
-  qualityOptionsError.value = "";
-
-  if (!hasValidLink()) {
-    qualityOptions.value = defaultQualityOptions();
-    setQuality(linkSettings.value?.defaultQuality || defaultQuality);
-    return;
-  }
-
+  const valid = hasValidLink();
+  discovery.invalidate(valid);
+  qualityOptions.value = defaultQualityOptions();
+  setQuality(linkSettings.value?.defaultQuality || defaultQuality);
+  if (!valid) return;
   qualityFetchTimer.value = window.setTimeout(loadQualityOptions, 500);
 };
 
 const loadQualityOptions = async () => {
   if (!hasValidLink()) return;
-
-  const previousQuality = getQuality();
-  const serial = qualityFetchSerial.value + 1;
-  qualityFetchSerial.value = serial;
-  loadingQualityOptions.value = true;
-
-  try {
-    const response = await downloads.qualities(
-      linkForm.url,
-      linkForm.downloader
-    );
-    if (qualityFetchSerial.value !== serial) return;
-
-    qualityOptions.value =
-      response.options.length > 0 ? response.options : defaultQualityOptions();
-    qualityOptionsError.value = response.error || "";
-    if (
-      qualityOptions.value.some((option) => option.quality === previousQuality)
-    ) {
-      selectedQuality.value = previousQuality;
-      customQuality.value = "";
-    } else if (selectedQuality.value !== "custom") {
-      selectedQuality.value =
-        qualityOptions.value[0]?.quality || defaultQuality;
-      customQuality.value = "";
-    }
-  } catch (error: any) {
-    if (qualityFetchSerial.value !== serial) return;
-    qualityOptions.value = defaultQualityOptions();
-    qualityOptionsError.value = error.message || String(error);
-  } finally {
-    if (qualityFetchSerial.value === serial) {
-      loadingQualityOptions.value = false;
-    }
-  }
+  const url = linkForm.url;
+  const downloader = linkForm.downloader;
+  await discovery.load(() => downloads.qualities(url, downloader));
 };
 
+watch(qualityResult, (response) => {
+  if (!response) return;
+  const previousQuality = getQuality();
+  qualityOptions.value = defaultQualityOptions();
+  setQuality(previousQuality);
+});
+
 const startLinkDownload = async () => {
+  if (loadingQualityOptions.value) return;
   submitting.value = true;
   stopPolling();
   job.value = null;
