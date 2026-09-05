@@ -367,3 +367,45 @@ func TestAutoDownloaderCannotBypassStrictQuality(t *testing.T) {
 		t.Fatal("auto downloader must not silently bypass requested video quality")
 	}
 }
+
+func TestQualityOptionsUseReadableCodecFamilies(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "audio", VCodec: "none", ACodec: "mp4a.40.2", Ext: "m4a"},
+		{FormatID: "old", Width: 3840, Height: 2160, FPS: 60, VCodec: "VP09.00.51.08", ACodec: "none", Ext: "webm"},
+		{FormatID: "preferred", Width: 3840, Height: 2160, FPS: 60, VCodec: "vp09.00.51.08", ACodec: "none", Ext: "mp4"},
+	})
+	count := 0
+	for _, option := range options {
+		if strings.HasPrefix(option.Quality, "old+") || strings.HasPrefix(option.Quality, "preferred+") {
+			count++
+			if !strings.HasSuffix(option.Label, "VP9 (8-bit)") || !strings.Contains(option.Description, "AAC audio") {
+				t.Errorf("not human-readable: %+v", option)
+			}
+			if option.Quality != "preferred+audio" {
+				t.Error("must keep the preferred equivalent stream")
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected one equivalent codec choice, got %d", count)
+	}
+}
+
+func TestQualityOptionsRetainCodecProfiles(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "8bit", Width: 3840, Height: 2160, VCodec: "vp09.00.51.08", ACodec: "opus", Ext: "webm"},
+		{FormatID: "10bit", Width: 3840, Height: 2160, VCodec: "vp09.02.51.10", ACodec: "opus", Ext: "webm"},
+	})
+	count := 0
+	for _, o := range options {
+		if o.Quality == "8bit" || o.Quality == "10bit" {
+			if !strings.Contains(o.Label, strings.Replace(o.Quality, "bit", "-bit", 1)) {
+				t.Errorf("missing readable bit depth: %s", o.Label)
+			}
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("profile choices lost: %+v", options)
+	}
+}

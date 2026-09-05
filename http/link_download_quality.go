@@ -117,7 +117,11 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 		if (f.ACodec == "none" || f.ACodec == "") && audio == nil {
 			continue
 		}
-		key := fmt.Sprintf("%dx%d/%g/%s/%s/%s", f.Width, f.Height, f.FPS, f.DynamicRange, f.Ext, f.VCodec)
+		container := f.Ext
+		if f.ACodec == "none" || f.ACodec == "" {
+			container = "mkv"
+		}
+		key := fmt.Sprintf("%dx%d/%g/%s/%s/%s", f.Width, f.Height, f.FPS, f.DynamicRange, container, strings.ToLower(f.VCodec))
 		grouped[key] = f
 	}
 	videos := make([]ytDLPFormat, 0, len(grouped))
@@ -142,18 +146,18 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 		quality := f.FormatID
 		size := formatSize(f)
 		container := strings.ToUpper(f.Ext)
-		description := fmt.Sprintf("%d × %d · %s video", f.Width, f.Height, f.VCodec)
+		description := fmt.Sprintf("%d × %d · %s video", f.Width, f.Height, readableCodec(f.VCodec))
 		if f.ACodec == "none" || f.ACodec == "" {
 			quality += "+" + audio.FormatID
 			container = "MKV"
-			description += fmt.Sprintf(" + %s audio; merged without re-encoding (%s source video).", audio.ACodec, strings.ToUpper(f.Ext))
+			description += fmt.Sprintf(" + %s audio; merged without re-encoding (%s source video).", readableCodec(audio.ACodec), strings.ToUpper(f.Ext))
 			if size > 0 && formatSize(*audio) > 0 {
 				size += formatSize(*audio)
 			} else {
 				size = 0
 			}
 		} else {
-			description += fmt.Sprintf(" + %s audio in one file.", f.ACodec)
+			description += fmt.Sprintf(" + %s audio in one file.", readableCodec(f.ACodec))
 		}
 		if size > 0 {
 			description += " Estimated download: " + readableDownloadSize(size) + "."
@@ -170,11 +174,11 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 		if container != "" {
 			label += " · " + container
 		}
-		label += " · " + f.VCodec
+		label += " · " + readableCodec(f.VCodec)
 		options = append(options, linkDownloadQualityData{Label: label, Quality: quality, Description: description})
 	}
 	if audio != nil {
-		options = append(options, linkDownloadQualityData{Label: "Audio only · " + strings.ToUpper(audio.Ext), Quality: audio.FormatID, Description: "Original " + audio.ACodec + " audio without video."})
+		options = append(options, linkDownloadQualityData{Label: "Audio only · " + strings.ToUpper(audio.Ext), Quality: audio.FormatID, Description: "Original " + readableCodec(audio.ACodec) + " audio without video."})
 	}
 	return options
 }
@@ -208,5 +212,43 @@ func resolutionLabel(height int) string {
 		return "720p HD"
 	default:
 		return fmt.Sprintf("%dp", height)
+	}
+}
+
+func readableCodec(codec string) string {
+	c := strings.ToLower(codec)
+	withDepth := func(name string) string {
+		parts := strings.Split(c, ".")
+		if len(parts) >= 4 {
+			switch parts[3] {
+			case "08":
+				return name + " (8-bit)"
+			case "10":
+				return name + " (10-bit)"
+			case "12":
+				return name + " (12-bit)"
+			}
+		}
+		return name
+	}
+	switch {
+	case strings.HasPrefix(c, "avc"), strings.HasPrefix(c, "h264"):
+		return "H.264"
+	case strings.HasPrefix(c, "hev"), strings.HasPrefix(c, "hvc"), strings.HasPrefix(c, "hevc"):
+		return "HEVC (H.265)"
+	case strings.HasPrefix(c, "av01"), c == "av1":
+		return withDepth("AV1")
+	case strings.HasPrefix(c, "vp09"), strings.HasPrefix(c, "vp9"):
+		return withDepth("VP9")
+	case strings.HasPrefix(c, "vp08"), strings.HasPrefix(c, "vp8"):
+		return "VP8"
+	case strings.HasPrefix(c, "mp4a"), c == "aac":
+		return "AAC"
+	case c == "opus":
+		return "Opus"
+	case c == "vorbis":
+		return "Vorbis"
+	default:
+		return strings.ToUpper(codec)
 	}
 }
