@@ -55,17 +55,33 @@ interface LinkDownloadYTDLPUpdate {
 }
 
 interface LinkDownloadQualityOption {
+  resolution?: number;
+  recommended?: boolean;
+  advanced?: boolean;
+  audioOnly?: boolean;
+  audioVariants?: Record<
+    string,
+    { quality: string; description: string; technicalDetails?: string }
+  >;
+  technicalDetails?: string;
+  description?: string;
   label: string;
   quality: string;
 }
 
 interface LinkDownloadQualities {
+  audioLanguages?: string[];
+  subtitleLanguages?: Array<{ language: string; automatic: boolean }>;
+  verified: boolean;
+  notice?: string;
   downloader: LinkDownloadDownloader;
   options: LinkDownloadQualityOption[];
   error?: string;
 }
 
 interface LinkDownloadRequest {
+  container?: "mkv" | "mp4";
+  subtitleLanguage?: string;
   url: string;
   path: string;
   filename?: string;

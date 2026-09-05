@@ -80,45 +80,200 @@
           />
         </p>
 
-        <p>
+        <div class="quality-field">
           <label for="link-download-quality">{{
             t("linkDownload.quality")
           }}</label>
           <select
             id="link-download-quality"
             class="input input--block"
-            v-model="selectedQuality"
-            :disabled="loadingQualityOptions"
+            v-model="mainQuality"
+            :disabled="loadingQualityOptions || !mainQualityOptions.length"
           >
+            <option v-if="!mainQuality" value="" disabled>
+              {{
+                qualityText(
+                  loadingQualityOptions
+                    ? "chooseQuality"
+                    : selectedQuality === "custom"
+                      ? "customQuality"
+                      : qualityResult
+                        ? "emptyQuality"
+                        : "waitingQuality"
+                )
+              }}
+            </option>
             <option
-              v-for="option in qualityOptions"
+              v-for="option in mainQualityOptions"
               :key="option.quality"
               :value="option.quality"
             >
-              {{ option.label }}
-            </option>
-            <option value="custom">
-              {{ t("linkDownload.qualityCustom") }}
+              {{ conciseQualityLabel(option)
+              }}{{
+                option.quality === recommendedQuality
+                  ? ` · ${qualityText("recommended")}`
+                  : ""
+              }}
             </option>
           </select>
-          <input
-            v-if="selectedQuality === 'custom'"
-            class="input input--block"
-            type="text"
-            required
-            :placeholder="t('linkDownload.formatSelectorPlaceholder')"
-            v-model.trim="customQuality"
+          <button
+            v-if="
+              !isDirectDownload &&
+              qualityResult?.verified &&
+              qualityOptions.length
+            "
+            type="button"
+            class="button button--flat advanced-toggle"
+            :aria-expanded="showMoreOptions"
+            aria-controls="advanced-quality-panel"
+            @click="showMoreOptions = !showMoreOptions"
+          >
+            {{ qualityText(showMoreOptions ? "fewerOptions" : "moreOptions") }}
+          </button>
+          <div
+            v-if="showMoreOptions && !isDirectDownload"
+            id="advanced-quality-panel"
+            class="advanced-quality-panel"
+          >
+            <label for="link-download-advanced-quality">{{
+              qualityText("advancedFormat")
+            }}</label>
+            <select
+              id="link-download-advanced-quality"
+              v-model="selectedQuality"
+              class="input input--block"
+              :disabled="loadingQualityOptions"
+            >
+              <option
+                v-for="option in visibleQualityOptions"
+                :key="option.quality"
+                :value="option.quality"
+              >
+                {{ option.label }}
+              </option>
+              <option value="custom">
+                {{ t("linkDownload.qualityCustom") }}
+              </option>
+            </select>
+            <span class="small option-help">{{
+              qualityText("advancedHelp")
+            }}</span>
+            <input
+              v-if="selectedQuality === 'custom'"
+              class="input input--block"
+              type="text"
+              required
+              :placeholder="t('linkDownload.formatSelectorPlaceholder')"
+              v-model.trim="customQuality"
+            />
+            <span v-if="selectedQuality === 'custom'" class="small option-help"
+              >{{ t("linkDownload.formatSelectorHelp") }}
+              {{ qualityText("manualLanguageHelp") }}</span
+            >
+          </div>
+          <QualityDescription
+            :key="`${selectedQuality}:${selectedAudioLanguage}`"
+            :description="selectedAudioOption?.description"
+            :technical-details="selectedAudioOption?.technicalDetails"
+            :technical-label="qualityText('qualityTechnical')"
           />
-          <span v-if="selectedQuality === 'custom'" class="small">
-            {{ t("linkDownload.formatSelectorHelp") }}
+          <span v-if="qualityResult?.notice" class="small" role="status">{{
+            qualityResult.notice
+          }}</span>
+          <span
+            v-if="
+              !loadingQualityOptions &&
+              !isDirectDownload &&
+              !qualityResult?.verified &&
+              (qualityResult || qualityOptionsError)
+            "
+            class="small"
+            role="status"
+          >
+            {{
+              qualityText(
+                qualityResult?.downloader === "direct"
+                  ? "qualityUnavailable"
+                  : "qualityFallback"
+              )
+            }}
           </span>
-          <span v-if="loadingQualityOptions" class="small">
+          <span v-if="loadingQualityOptions" class="small" role="status">
             {{ t("linkDownload.loadingQualities") }}
           </span>
           <span v-else-if="qualityOptionsError" class="small">
             {{ qualityOptionsError }}
           </span>
-        </p>
+        </div>
+
+        <template v-if="!isDirectDownload">
+          <p v-if="!selectedOption?.audioOnly">
+            <label for="link-download-container">{{
+              qualityText("fileType")
+            }}</label>
+            <select
+              id="link-download-container"
+              v-model="selectedContainer"
+              class="input input--block"
+            >
+              <option value="mkv">{{ qualityText("mkvRecommended") }}</option>
+              <option value="mp4">MP4</option>
+            </select>
+            <span class="small option-help">{{
+              qualityText(selectedContainer === "mkv" ? "mkvHelp" : "mp4Help")
+            }}</span>
+          </p>
+          <p v-if="qualityResult?.audioLanguages?.length">
+            <label for="link-download-audio-language">{{
+              qualityText("audioLanguage")
+            }}</label>
+            <select
+              id="link-download-audio-language"
+              v-model="selectedAudioLanguage"
+              class="input input--block"
+              :disabled="loadingQualityOptions || selectedQuality === 'custom'"
+            >
+              <option value="">{{ qualityText("audioDefault") }}</option>
+              <option
+                v-for="language in qualityResult?.audioLanguages || []"
+                :key="language"
+                :value="language"
+              >
+                {{ downloadLanguageName(language) }}
+              </option>
+            </select>
+          </p>
+          <p
+            v-if="
+              !selectedOption?.audioOnly &&
+              qualityResult?.subtitleLanguages?.length
+            "
+          >
+            <label for="link-download-subtitles">{{
+              qualityText("subtitles")
+            }}</label>
+            <select
+              id="link-download-subtitles"
+              v-model="selectedSubtitleLanguage"
+              class="input input--block"
+              :disabled="loadingQualityOptions"
+            >
+              <option value="">{{ qualityText("subtitlesOff") }}</option>
+              <option
+                v-for="subtitle in qualityResult?.subtitleLanguages || []"
+                :key="subtitle.language"
+                :value="subtitle.language"
+              >
+                {{ downloadLanguageName(subtitle.language)
+                }}{{
+                  subtitle.automatic
+                    ? ` (${qualityText("subtitlesAutomatic")})`
+                    : ""
+                }}
+              </option>
+            </select>
+          </p>
+        </template>
 
         <p>
           <label for="link-download-downloader">{{
@@ -182,7 +337,12 @@
         <input
           class="button button--flat"
           type="submit"
-          :disabled="submitting || (!!job && !isTerminal)"
+          :disabled="
+            submitting ||
+            loadingQualityOptions ||
+            !selectedQuality ||
+            (!!job && !isTerminal)
+          "
           :value="t('buttons.downloadFromLink')"
         />
       </div>
@@ -206,13 +366,31 @@ import { useRoute } from "vue-router";
 import { downloads } from "@/api";
 import { removePrefix } from "@/api/utils";
 import ProgressBar from "@/components/ProgressBar.vue";
+import QualityDescription from "@/components/prompts/QualityDescription.vue";
 import { useFileStore } from "@/stores/file";
 import { useLayoutStore } from "@/stores/layout";
 
 import * as upload from "@/utils/upload";
 import buttons from "@/utils/buttons";
+import {
+  defaultVideoQuality,
+  qualityMessages,
+  useDownloadQualities,
+  resolveDownloadQualityOptions,
+  selectVisibleQuality,
+  conciseQualityLabel,
+  recommendedQualityOption,
+  filterAudioQualityOptions,
+  resolveAudioQuality,
+  videoDownloadExtras,
+  downloadLanguageName,
+} from "@/utils/download-qualities";
 
 const { t } = useI18n();
+const { t: qualityText } = useI18n({
+  useScope: "local",
+  messages: qualityMessages,
+});
 const route = useRoute();
 
 const layoutStore = useLayoutStore();
@@ -228,14 +406,63 @@ const submitting = ref(false);
 const job = ref<LinkDownloadJob | null>(null);
 const pollTimer = ref<number | null>(null);
 const qualityOptions = ref<LinkDownloadQualityOption[]>([]);
-const defaultQuality = "bestvideo*+bestaudio/best";
-const selectedQuality = ref(defaultQuality);
+const selectedAudioLanguage = ref("");
+const selectedSubtitleLanguage = ref("");
+const selectedContainer = ref<"mkv" | "mp4">("mkv");
+const showMoreOptions = ref(false);
+const mainQualityOptions = computed(() =>
+  filterAudioQualityOptions(qualityOptions.value, selectedAudioLanguage.value)
+);
+const visibleQualityOptions = computed(() =>
+  filterAudioQualityOptions(
+    qualityOptions.value,
+    selectedAudioLanguage.value,
+    showMoreOptions.value
+  )
+);
+const defaultQuality = defaultVideoQuality;
+const selectedQuality = ref("");
 const lastPresetQuality = ref(defaultQuality);
 const customQuality = ref("");
-const loadingQualityOptions = ref(false);
-const qualityOptionsError = ref("");
+const discovery = useDownloadQualities();
+const loadingQualityOptions = discovery.loading;
+const qualityOptionsError = discovery.error;
+const qualityResult = discovery.result;
+const selectedOption = computed(() =>
+  qualityOptions.value.find(
+    (option) => option.quality === selectedQuality.value
+  )
+);
+const mainQuality = computed({
+  get() {
+    const main = mainQualityOptions.value;
+    const exact = main.find(
+      (option) => option.quality === selectedQuality.value
+    );
+    if (exact) return exact.quality;
+    if (!selectedOption.value?.resolution) return "";
+    return (
+      main.find(
+        (option) => option.resolution === selectedOption.value?.resolution
+      )?.quality || ""
+    );
+  },
+  set(value: string) {
+    selectedQuality.value = value;
+  },
+});
+const recommendedQuality = computed(() => {
+  if (isDirectDownload.value) return "";
+  const main = filterAudioQualityOptions(
+    qualityOptions.value,
+    selectedAudioLanguage.value
+  );
+  return recommendedQualityOption(main)?.quality || "";
+});
+const selectedAudioOption = computed(() =>
+  resolveAudioQuality(selectedOption.value, selectedAudioLanguage.value)
+);
 const qualityFetchTimer = ref<number | null>(null);
-const qualityFetchSerial = ref(0);
 
 const linkForm = reactive<LinkDownloadRequest>({
   url: "",
@@ -246,12 +473,13 @@ const linkForm = reactive<LinkDownloadRequest>({
   overwrite: false,
 });
 
-const defaultQualityOptions = (): LinkDownloadQualityOption[] => [
-  {
-    label: t("linkDownload.qualityBest"),
-    quality: defaultQuality,
-  },
-];
+const isDirectDownload = computed(() => linkForm.downloader === "direct");
+const defaultQualityOptions = (): LinkDownloadQualityOption[] =>
+  resolveDownloadQualityOptions(linkForm.downloader, qualityResult.value, {
+    label: qualityText("qualityOriginal"),
+    quality: "best",
+    description: qualityText("qualityOriginalHelp"),
+  });
 
 const isTerminal = computed(() => {
   return (
@@ -282,14 +510,20 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopPolling();
   stopQualityOptionsTimer();
+  discovery.invalidate();
 });
 
-watch([() => linkForm.url, () => linkForm.downloader], () => {
-  scheduleQualityOptionsLoad();
-});
+watch(
+  [() => linkForm.url, () => linkForm.downloader],
+  () => {
+    scheduleQualityOptionsLoad();
+  },
+  { flush: "sync" }
+);
 
 watch(selectedQuality, (quality, previousQuality) => {
   if (quality === "custom") {
+    selectedAudioLanguage.value = "";
     customQuality.value =
       customQuality.value.trim() ||
       (previousQuality && previousQuality !== "custom"
@@ -391,37 +625,43 @@ const openLinkDownload = async () => {
 
   if (!linkSettings.value.enabled) return;
 
-  const configuredDefaultQuality =
-    linkSettings.value.defaultQuality || defaultQuality;
   linkForm.url = "";
   linkForm.path = linkSettings.value.defaultPath || currentFolder();
   linkForm.filename = "";
   linkForm.downloader = linkSettings.value.downloader || "auto";
   linkForm.overwrite = false;
+  selectedContainer.value = "mkv";
+  selectedAudioLanguage.value = "";
+  selectedSubtitleLanguage.value = "";
   qualityOptions.value = defaultQualityOptions();
   qualityOptionsError.value = "";
-  setQuality(configuredDefaultQuality);
+  selectedQuality.value = isDirectDownload.value ? "best" : "";
   job.value = null;
   mode.value = "link";
   await nextTick();
   linkInput.value?.focus();
 };
 
-const setQuality = (quality: string) => {
-  if (qualityOptions.value.some((option) => option.quality === quality)) {
-    selectedQuality.value = quality;
-    customQuality.value = "";
-    lastPresetQuality.value = quality;
-    return;
-  }
-
-  selectedQuality.value = "custom";
-  customQuality.value = quality;
-};
+watch(
+  [visibleQualityOptions, showMoreOptions],
+  () => {
+    selectedQuality.value = selectVisibleQuality(
+      selectedQuality.value,
+      visibleQualityOptions.value,
+      showMoreOptions.value
+    );
+  },
+  { flush: "sync" }
+);
 
 const getQuality = () => {
   if (selectedQuality.value === "custom") {
     return customQuality.value.trim();
+  }
+  if (selectedAudioLanguage.value) {
+    if (!selectedAudioOption.value)
+      throw new Error(qualityText("languageUnavailable"));
+    return selectedAudioOption.value.quality;
   }
   return selectedQuality.value || defaultQuality;
 };
@@ -437,57 +677,34 @@ const hasValidLink = () => {
 
 const scheduleQualityOptionsLoad = () => {
   stopQualityOptionsTimer();
-  qualityOptionsError.value = "";
-
-  if (!hasValidLink()) {
-    qualityOptions.value = defaultQualityOptions();
-    setQuality(linkSettings.value?.defaultQuality || defaultQuality);
-    return;
-  }
-
+  const valid = hasValidLink();
+  selectedAudioLanguage.value = "";
+  selectedSubtitleLanguage.value = "";
+  discovery.invalidate(valid);
+  qualityOptions.value = defaultQualityOptions();
+  selectedQuality.value = isDirectDownload.value ? "best" : "";
+  customQuality.value = "";
+  showMoreOptions.value = false;
+  if (!valid) return;
   qualityFetchTimer.value = window.setTimeout(loadQualityOptions, 500);
 };
 
 const loadQualityOptions = async () => {
   if (!hasValidLink()) return;
-
-  const previousQuality = getQuality();
-  const serial = qualityFetchSerial.value + 1;
-  qualityFetchSerial.value = serial;
-  loadingQualityOptions.value = true;
-
-  try {
-    const response = await downloads.qualities(
-      linkForm.url,
-      linkForm.downloader
-    );
-    if (qualityFetchSerial.value !== serial) return;
-
-    qualityOptions.value =
-      response.options.length > 0 ? response.options : defaultQualityOptions();
-    qualityOptionsError.value = response.error || "";
-    if (
-      qualityOptions.value.some((option) => option.quality === previousQuality)
-    ) {
-      selectedQuality.value = previousQuality;
-      customQuality.value = "";
-    } else if (selectedQuality.value !== "custom") {
-      selectedQuality.value =
-        qualityOptions.value[0]?.quality || defaultQuality;
-      customQuality.value = "";
-    }
-  } catch (error: any) {
-    if (qualityFetchSerial.value !== serial) return;
-    qualityOptions.value = defaultQualityOptions();
-    qualityOptionsError.value = error.message || String(error);
-  } finally {
-    if (qualityFetchSerial.value === serial) {
-      loadingQualityOptions.value = false;
-    }
-  }
+  const url = linkForm.url;
+  const downloader = linkForm.downloader;
+  await discovery.load(() => downloads.qualities(url, downloader));
 };
 
+watch(qualityResult, (response) => {
+  if (!response) return;
+  qualityOptions.value = defaultQualityOptions();
+  selectedQuality.value =
+    recommendedQualityOption(visibleQualityOptions.value)?.quality || "";
+});
+
 const startLinkDownload = async () => {
+  if (loadingQualityOptions.value || !selectedQuality.value) return;
   submitting.value = true;
   stopPolling();
   job.value = null;
@@ -503,6 +720,12 @@ const startLinkDownload = async () => {
 
     const created = await downloads.create({
       ...linkForm,
+      ...videoDownloadExtras(
+        linkForm.downloader,
+        selectedContainer.value,
+        selectedSubtitleLanguage.value,
+        selectedOption.value?.audioOnly
+      ),
       filename: linkForm.filename || undefined,
       quality: getQuality(),
       path: linkForm.path || currentFolder(),
@@ -569,8 +792,11 @@ const stopQualityOptionsTimer = () => {
 </script>
 
 <style scoped>
-.upload-link-card {
-  max-width: 34em;
+.card.floating.upload-link-card {
+  width: 560px;
+  max-width: calc(100vw - 2em);
+  max-height: calc(100dvh - 2em);
+  overflow-y: auto;
   border: 1px solid var(--borderPrimary);
 }
 
@@ -578,8 +804,16 @@ const stopQualityOptionsTimer = () => {
   border-top: 1px solid var(--borderPrimary);
 }
 
-.link-download p {
+.link-download p,
+.link-download .quality-field {
   margin: 0 0 0.9em;
+}
+
+.quality-field > .small,
+.option-help {
+  display: block;
+  margin-top: 0.65em;
+  line-height: 1.5;
 }
 
 .link-download {
@@ -588,6 +822,18 @@ const stopQualityOptionsTimer = () => {
 
 .upload-link-card .card-action {
   padding: 0 1.25em 1.25em;
+}
+
+.advanced-toggle {
+  margin-top: 0.5em;
+  padding-left: 0;
+}
+.advanced-quality-panel {
+  margin: 0.65em 0;
+  padding: 0.85em;
+  border: 1px solid var(--borderPrimary);
+  border-radius: 4px;
+  background: var(--surfaceSecondary);
 }
 
 .link-download-progress {
