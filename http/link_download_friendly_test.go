@@ -124,7 +124,7 @@ func TestSourceRecommendationUsesAvailableResolution(t *testing.T) {
 		heights []int
 		want    int
 	}{
-		{"below4k", []int{360, 1080}, 1080}, {"above4k", []int{4320, 2880}, 2880},
+		{"below4k", []int{360, 1080}, 1080}, {"above4k", []int{4320, 2880}, 4320},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var formats []ytDLPFormat
@@ -167,5 +167,58 @@ func TestSourceVideoOptionsExposeResolution(t *testing.T) {
 		if data["resolution"] != want {
 			t.Fatalf("resolution = %v, want %v", data["resolution"], want)
 		}
+	}
+}
+
+func TestGenericMediaWithoutQualityMetadata(t *testing.T) {
+	for _, body := range []string{
+		`{"formats":[{"format_id":"mp4","url":"https://example.com/video.mp4","ext":"mp4","vcodec":null}]}`,
+		`{"format_id":"mp4","url":"https://example.com/video.mp4","ext":"mp4","vcodec":null}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			binary := writeYTDLPTestScript(t, "echo '"+body+"'")
+			result, err := ytDLPQualityOptions(context.Background(), binary, "https://example.com/video.mp4")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Verified || len(result.Options) != 1 {
+				t.Fatalf("missing direct source: %+v", result)
+			}
+			option := result.Options[0]
+			if option.Quality != "mp4" || !option.Recommended || option.Resolution != 0 || !strings.Contains(option.Label, "quality not reported") || strings.Contains(option.Description, "Sound: Included") {
+				t.Fatalf("invented original metadata: %+v", option)
+			}
+			if result.Notice != "" || len(result.AudioLanguages) != 0 {
+				t.Fatalf("unexpected source notices/languages: %+v", result)
+			}
+		})
+	}
+}
+
+func TestUnknownAudioIsNotSilenceOrInventedCompanion(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{
+		{FormatID: "video", Width: 1920, Height: 1080, VCodec: "avc1"},
+		{FormatID: "audio", VCodec: "none", ACodec: "aac"},
+	})
+	if options[0].Quality != "video" || !strings.Contains(options[0].Description, "Sound: Not reported") {
+		t.Fatalf("unknown audio changed: %+v", options)
+	}
+}
+
+func TestKnownSilentVideoRemainsDownloadable(t *testing.T) {
+	options := qualityOptionsFromFormats([]ytDLPFormat{{FormatID: "silent", Width: 1920, Height: 1080, VCodec: "avc1", ACodec: "none"}})
+	if len(options) != 1 || options[0].Quality != "silent" || !strings.Contains(options[0].Description, "Sound: No audio") {
+		t.Fatalf("silent source lost or misreported: %+v", options)
+	}
+}
+
+func TestNoUsableFormatsIsNotVerified(t *testing.T) {
+	binary := writeYTDLPTestScript(t, `echo '{"formats":[{"format_id":"storyboard","ext":"mhtml","vcodec":"none","acodec":"none"}]}'`)
+	result, err := ytDLPQualityOptions(context.Background(), binary, "https://example.com/video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Verified || result.Notice != "No downloadable formats were reported by this website." || len(result.Options) != 0 {
+		t.Fatalf("misleading empty source: %+v", result)
 	}
 }

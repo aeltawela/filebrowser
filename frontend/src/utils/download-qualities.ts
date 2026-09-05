@@ -11,7 +11,13 @@ export const qualityMessages = {
     qualityTechnical: () => "Technical details",
     fileType: () => "File type",
     mkvRecommended: () => "MKV (Recommended)",
-    moreOptions: () => "Show more options",
+    moreOptions: () => "Show advanced formats",
+    fewerOptions: () => "Hide advanced formats",
+    advancedFormat: () => "Advanced format",
+    advancedHelp: () =>
+      "Choose a specific version, or keep the selected quality above.",
+    emptyQuality: () => "No downloadable qualities found",
+    customQuality: () => "Custom format selected",
     recommended: () => "Recommended",
     recommendationHelp: () =>
       "Balances picture quality and playback support. Keeps the original picture size without enlarging it.",
@@ -152,7 +158,32 @@ export function selectVisibleQuality(
     options.some((option) => option.quality === current)
   )
     return current;
+  return recommendedQualityOption(options)?.quality || "";
+}
+
+export function conciseQualityLabel(option: LinkDownloadQualityOption) {
+  if (!option.resolution) return option.label;
+  const names: Record<number, string> = {
+    4320: "8K Ultra HD",
+    2160: "4K Ultra HD",
+    1440: "1440p QHD",
+    1080: "1080p Full HD",
+    720: "720p HD",
+  };
+  return names[option.resolution] || `${option.resolution}p`;
+}
+
+export function recommendedQualityOption(options: LinkDownloadQualityOption[]) {
+  const videos = options.filter((option) => !option.audioOnly);
+  const target = videos.some((option) => option.resolution === 2160)
+    ? 2160
+    : Math.max(0, ...videos.map((option) => option.resolution || 0));
+  const candidates = videos.filter(
+    (option) => (option.resolution || 0) === target
+  );
   return (
-    (options.find((option) => option.recommended) || options[0])?.quality || ""
+    candidates.find((option) => option.recommended) ||
+    candidates[0] ||
+    options[0]
   );
 }

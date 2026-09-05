@@ -21,7 +21,9 @@ describe("quality explanation", () => {
       "Picture: 4K\nSound: Included",
       "VP9 · 3840×2160"
     );
-    expect(html).toContain("Picture: 4K\nSound: Included");
+    expect(html).toMatch(/<strong[^>]*>Picture<\/strong>/);
+    expect(html).toMatch(/<span[^>]*>4K<\/span>/);
+    expect(html).toMatch(/<strong[^>]*>Sound<\/strong>/);
     expect(html).toMatch(/<summary[^>]*>Technical details<\/summary>/);
     expect(html).toContain("VP9 · 3840×2160");
     expect(html).not.toMatch(/<details[^>]*\bopen\b/);

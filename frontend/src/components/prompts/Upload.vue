@@ -87,59 +87,90 @@
           <select
             id="link-download-quality"
             class="input input--block"
-            v-model="selectedQuality"
-            :disabled="
-              loadingQualityOptions ||
-              (!visibleQualityOptions.length && !showMoreOptions)
-            "
+            v-model="mainQuality"
+            :disabled="loadingQualityOptions || !mainQualityOptions.length"
           >
-            <option v-if="!selectedQuality" value="" disabled>
+            <option v-if="!mainQuality" value="" disabled>
               {{
                 qualityText(
-                  loadingQualityOptions ? "chooseQuality" : "waitingQuality"
+                  loadingQualityOptions
+                    ? "chooseQuality"
+                    : selectedQuality === "custom"
+                      ? "customQuality"
+                      : qualityResult
+                        ? "emptyQuality"
+                        : "waitingQuality"
                 )
               }}
             </option>
             <option
-              v-for="option in visibleQualityOptions"
+              v-for="option in mainQualityOptions"
               :key="option.quality"
               :value="option.quality"
             >
-              {{ option.label
+              {{ conciseQualityLabel(option)
               }}{{
                 option.quality === recommendedQuality
                   ? ` · ${qualityText("recommended")}`
                   : ""
               }}
             </option>
-            <option v-if="!isDirectDownload && showMoreOptions" value="custom">
-              {{ t("linkDownload.qualityCustom") }}
-            </option>
           </select>
-          <label
-            v-if="!isDirectDownload && qualityResult?.verified"
-            class="small option-help"
+          <button
+            v-if="
+              !isDirectDownload &&
+              qualityResult?.verified &&
+              qualityOptions.length
+            "
+            type="button"
+            class="button button--flat advanced-toggle"
+            :aria-expanded="showMoreOptions"
+            aria-controls="advanced-quality-panel"
+            @click="showMoreOptions = !showMoreOptions"
           >
-            <input type="checkbox" v-model="showMoreOptions" />
-            {{ qualityText("moreOptions") }}
-          </label>
-          <input
-            v-if="selectedQuality === 'custom'"
-            class="input input--block"
-            type="text"
-            required
-            :placeholder="t('linkDownload.formatSelectorPlaceholder')"
-            v-model.trim="customQuality"
-          />
-          <span v-if="selectedQuality === 'custom'" class="small">
-            {{ t("linkDownload.formatSelectorHelp") }}
-            {{ qualityText("manualLanguageHelp") }}
-          </span>
-          <span
-            v-if="selectedQuality && selectedQuality === recommendedQuality"
-            class="small option-help"
-            >{{ qualityText("recommendationHelp") }}</span
+            {{ qualityText(showMoreOptions ? "fewerOptions" : "moreOptions") }}
+          </button>
+          <div
+            v-if="showMoreOptions && !isDirectDownload"
+            id="advanced-quality-panel"
+            class="advanced-quality-panel"
           >
+            <label for="link-download-advanced-quality">{{
+              qualityText("advancedFormat")
+            }}</label>
+            <select
+              id="link-download-advanced-quality"
+              v-model="selectedQuality"
+              class="input input--block"
+              :disabled="loadingQualityOptions"
+            >
+              <option
+                v-for="option in visibleQualityOptions"
+                :key="option.quality"
+                :value="option.quality"
+              >
+                {{ option.label }}
+              </option>
+              <option value="custom">
+                {{ t("linkDownload.qualityCustom") }}
+              </option>
+            </select>
+            <span class="small option-help">{{
+              qualityText("advancedHelp")
+            }}</span>
+            <input
+              v-if="selectedQuality === 'custom'"
+              class="input input--block"
+              type="text"
+              required
+              :placeholder="t('linkDownload.formatSelectorPlaceholder')"
+              v-model.trim="customQuality"
+            />
+            <span v-if="selectedQuality === 'custom'" class="small option-help"
+              >{{ t("linkDownload.formatSelectorHelp") }}
+              {{ qualityText("manualLanguageHelp") }}</span
+            >
+          </div>
           <QualityDescription
             :key="`${selectedQuality}:${selectedAudioLanguage}`"
             :description="selectedAudioOption?.description"
@@ -153,6 +184,7 @@
             v-if="
               !loadingQualityOptions &&
               !isDirectDownload &&
+              !qualityResult?.verified &&
               (qualityResult || qualityOptionsError)
             "
             class="small"
@@ -162,9 +194,7 @@
               qualityText(
                 qualityResult?.downloader === "direct"
                   ? "qualityUnavailable"
-                  : qualityResult?.verified
-                    ? "qualityVerified"
-                    : "qualityFallback"
+                  : "qualityFallback"
               )
             }}
           </span>
@@ -348,6 +378,8 @@ import {
   useDownloadQualities,
   resolveDownloadQualityOptions,
   selectVisibleQuality,
+  conciseQualityLabel,
+  recommendedQualityOption,
   filterAudioQualityOptions,
   resolveAudioQuality,
   videoDownloadExtras,
@@ -378,6 +410,9 @@ const selectedAudioLanguage = ref("");
 const selectedSubtitleLanguage = ref("");
 const selectedContainer = ref<"mkv" | "mp4">("mkv");
 const showMoreOptions = ref(false);
+const mainQualityOptions = computed(() =>
+  filterAudioQualityOptions(qualityOptions.value, selectedAudioLanguage.value)
+);
 const visibleQualityOptions = computed(() =>
   filterAudioQualityOptions(
     qualityOptions.value,
@@ -398,18 +433,31 @@ const selectedOption = computed(() =>
     (option) => option.quality === selectedQuality.value
   )
 );
+const mainQuality = computed({
+  get() {
+    const main = mainQualityOptions.value;
+    const exact = main.find(
+      (option) => option.quality === selectedQuality.value
+    );
+    if (exact) return exact.quality;
+    if (!selectedOption.value?.resolution) return "";
+    return (
+      main.find(
+        (option) => option.resolution === selectedOption.value?.resolution
+      )?.quality || ""
+    );
+  },
+  set(value: string) {
+    selectedQuality.value = value;
+  },
+});
 const recommendedQuality = computed(() => {
   if (isDirectDownload.value) return "";
   const main = filterAudioQualityOptions(
     qualityOptions.value,
     selectedAudioLanguage.value
   );
-  return (
-    (
-      main.find((option) => option.recommended) ||
-      main.find((option) => !option.audioOnly)
-    )?.quality || ""
-  );
+  return recommendedQualityOption(main)?.quality || "";
 });
 const selectedAudioOption = computed(() =>
   resolveAudioQuality(selectedOption.value, selectedAudioLanguage.value)
@@ -651,7 +699,8 @@ const loadQualityOptions = async () => {
 watch(qualityResult, (response) => {
   if (!response) return;
   qualityOptions.value = defaultQualityOptions();
-  selectedQuality.value = visibleQualityOptions.value[0]?.quality || "";
+  selectedQuality.value =
+    recommendedQualityOption(visibleQualityOptions.value)?.quality || "";
 });
 
 const startLinkDownload = async () => {
@@ -773,6 +822,18 @@ const stopQualityOptionsTimer = () => {
 
 .upload-link-card .card-action {
   padding: 0 1.25em 1.25em;
+}
+
+.advanced-toggle {
+  margin-top: 0.5em;
+  padding-left: 0;
+}
+.advanced-quality-panel {
+  margin: 0.65em 0;
+  padding: 0.85em;
+  border: 1px solid var(--borderPrimary);
+  border-radius: 4px;
+  background: var(--surfaceSecondary);
 }
 
 .link-download-progress {

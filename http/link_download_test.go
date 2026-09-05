@@ -140,13 +140,13 @@ func TestQualityOptionsFromFormats(t *testing.T) {
 	}
 }
 
-func TestQualityOptionsExcludeDRMAndSilentVideo(t *testing.T) {
+func TestQualityOptionsExcludeDRMButPreserveSilentVideo(t *testing.T) {
 	options := qualityOptionsFromFormats([]ytDLPFormat{
 		{FormatID: "drm", Width: 3840, Height: 2160, VCodec: "av01", ACodec: "aac", HasDRM: true},
 		{FormatID: "silent", Width: 3840, Height: 2160, VCodec: "av01", ACodec: "none"},
 	})
 	for _, option := range options {
-		if strings.Contains(option.Quality, "drm") || strings.Contains(option.Quality, "silent") {
+		if strings.Contains(option.Quality, "drm") {
 			t.Fatalf("unusable option: %+v", option)
 		}
 	}
@@ -356,7 +356,7 @@ func TestQualityProbeDoesNotBorrowAudioFromLowerMuxedVideo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Notice, "4K with audio is not available") {
+	if result.Notice != "" || len(result.Options) != 2 || result.Options[0].Quality != "4k" || !strings.Contains(result.Options[0].Description, "Sound: No audio") {
 		t.Fatalf("misleading availability: %+v", result)
 	}
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   useDownloadQualities,
+  recommendedQualityOption,
+  conciseQualityLabel,
   downloadLanguageName,
   selectVisibleQuality,
   filterAudioQualityOptions,
@@ -246,4 +248,25 @@ it("promotes the first language-supported format per resolution", () => {
 
 it("names original subtitle language selectors without changing the selector", () => {
   expect(downloadLanguageName("en-orig")).toBe("English");
+});
+
+it("shows simple picture-quality names without codec clutter", () => {
+  expect(
+    conciseQualityLabel({
+      label: "2160p60 AV1 HDR MKV",
+      quality: "id",
+      resolution: 2160,
+    })
+  ).toBe("4K Ultra HD");
+  expect(
+    conciseQualityLabel({ label: "1080p VP9", quality: "id", resolution: 1080 })
+  ).toBe("1080p Full HD");
+});
+
+it("recommends source 4K when present and otherwise the highest resolution", () => {
+  const high = { label: "8K", quality: "8k", resolution: 4320 };
+  const four = { label: "4K", quality: "4k", resolution: 2160 };
+  const lower = { label: "1440p", quality: "1440", resolution: 1440 };
+  expect(recommendedQualityOption([lower, high])).toEqual(high);
+  expect(recommendedQualityOption([high, four, lower])).toEqual(four);
 });

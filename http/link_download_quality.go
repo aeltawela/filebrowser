@@ -32,11 +32,13 @@ func defaultLinkDownloadQualities(downloader string) []linkDownloadQualityData {
 }
 
 type ytDLPMetadata struct {
+	ytDLPFormat
 	Formats           []ytDLPFormat              `json:"formats"`
 	Subtitles         map[string]json.RawMessage `json:"subtitles"`
 	AutomaticCaptions map[string]json.RawMessage `json:"automatic_captions"`
 }
 type ytDLPFormat struct {
+	URL            string  `json:"url"`
 	FormatID       string  `json:"format_id"`
 	Language       string  `json:"language"`
 	Width          int     `json:"width"`
@@ -72,28 +74,16 @@ func ytDLPQualityOptions(ctx context.Context, binary, rawURL string) (linkDownlo
 	if err := json.Unmarshal(output, &metadata); err != nil {
 		return linkDownloadQualitiesData{}, fmt.Errorf("yt-dlp returned invalid format metadata")
 	}
+	if len(metadata.Formats) == 0 && usableOriginalVideo(metadata.ytDLPFormat) {
+		metadata.Formats = []ytDLPFormat{metadata.ytDLPFormat}
+	}
 	result := linkDownloadQualitiesData{Options: qualityOptionsFromFormats(metadata.Formats), Verified: true, AudioLanguages: audioLanguageChoices(metadata.Formats), SubtitleLanguages: subtitleLanguageChoices(metadata)}
-	has4K := false
-	hasSeparateAudio := false
-	for _, f := range metadata.Formats {
-		if usableFormat(f) && f.VCodec == "none" && f.ACodec != "" && f.ACodec != "none" {
-			hasSeparateAudio = true
-		}
-	}
-	for _, f := range metadata.Formats {
-		if usableVideoFormat(f) && f.Width >= 2160 && f.Height >= 2160 && ((f.ACodec != "" && f.ACodec != "none") || hasSeparateAudio) {
-			has4K = true
-		}
-	}
-	if !has4K {
-		result.Notice = "4K with audio is not available from this source. The available source qualities are listed below."
-	}
 	if warnings.Len() > 0 {
 		result.Notice = strings.TrimSpace(result.Notice + " This website may not have shared every option. Try the link again if a quality is missing.")
 	}
-	if len(metadata.Formats) == 0 {
+	if len(result.Options) == 0 {
 		result.Verified = false
-		result.Notice = "We could not check this video's available qualities. Your choice will be checked when downloading."
+		result.Notice = "No downloadable formats were reported by this website."
 	}
 	return result, nil
 }
@@ -102,7 +92,7 @@ func usableFormat(f ytDLPFormat) bool {
 	return !f.HasDRM && ytDLPFormatIDPattern.MatchString(f.FormatID)
 }
 func usableVideoFormat(f ytDLPFormat) bool {
-	return usableFormat(f) && f.Width > 0 && f.Height > 0 && f.VCodec != "" && f.VCodec != "none"
+	return usableFormat(f) && f.Width > 0 && f.Height > 0 && f.VCodec != "none" && (f.VCodec != "" || usableOriginalVideo(f))
 }
 
 func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData {
@@ -120,11 +110,11 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 	}
 	grouped := map[string]ytDLPFormat{}
 	for _, f := range formats {
-		if !usableVideoFormat(f) || ((f.ACodec == "none" || f.ACodec == "") && audio == nil) {
+		if !usableVideoFormat(f) {
 			continue
 		}
 		container := f.Ext
-		if f.ACodec == "none" || f.ACodec == "" {
+		if f.ACodec == "none" {
 			container = "merged"
 		}
 		key := fmt.Sprintf("%dx%d/%g/%s/%s/%s/%s", f.Width, f.Height, f.FPS, f.DynamicRange, container, strings.ToLower(f.VCodec), f.Language)
@@ -156,12 +146,12 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 	recommendedResolution := 0
 	for _, f := range videos {
 		r := min(f.Width, f.Height)
-		if r <= 2160 && r > recommendedResolution {
+		if r == 2160 {
 			recommendedResolution = r
 		}
 	}
 	if recommendedResolution == 0 && len(videos) > 0 {
-		recommendedResolution = min(videos[len(videos)-1].Width, videos[len(videos)-1].Height)
+		recommendedResolution = min(videos[0].Width, videos[0].Height)
 	}
 	for _, f := range videos {
 		option := videoQualityOption(f, audio)
@@ -170,7 +160,7 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 		option.Recommended = !option.Advanced && r == recommendedResolution
 		seenResolutions[r] = true
 		option.AudioVariants = map[string]linkDownloadAudioVariant{}
-		if f.ACodec == "none" || f.ACodec == "" {
+		if f.ACodec == "none" {
 			for language, track := range audioByLanguage {
 				variant := videoQualityOption(f, track)
 				option.AudioVariants[language] = linkDownloadAudioVariant{Quality: variant.Quality, Description: variant.Description, TechnicalDetails: variant.TechnicalDetails}
@@ -179,6 +169,16 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 			option.AudioVariants[f.Language] = linkDownloadAudioVariant{Quality: option.Quality, Description: option.Description, TechnicalDetails: option.TechnicalDetails}
 		}
 		options = append(options, option)
+	}
+	for _, f := range formats {
+		if usableVideoFormat(f) || !usableOriginalVideo(f) {
+			continue
+		}
+		options = append(options, linkDownloadQualityData{
+			Label: "Original video · quality not reported", Quality: f.FormatID,
+			Description:      "Picture: Quality not reported by this website.\nSound: " + sourceSoundDescription(f.ACodec) + "\nDownload size: " + friendlyDownloadSize(formatSize(f)),
+			TechnicalDetails: "Original " + strings.ToUpper(f.Ext) + " source file. No resizing or re-encoding.",
+		})
 	}
 	if audio != nil {
 		option := audioQualityOption(*audio)
@@ -199,6 +199,32 @@ func qualityOptionsFromFormats(formats []ytDLPFormat) []linkDownloadQualityData 
 		options[0].Recommended = true
 	}
 	return options
+}
+
+func usableOriginalVideo(f ytDLPFormat) bool {
+	if !usableFormat(f) || f.VCodec == "none" {
+		return false
+	}
+	parsed, err := url.Parse(f.URL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	switch strings.ToLower(f.Ext) {
+	case "mp4", "webm", "mkv", "mov", "m4v", "avi", "ts", "mpeg", "mpg", "ogv", "flv":
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceSoundDescription(codec string) string {
+	if codec == "" {
+		return "Not reported by this website."
+	}
+	if codec == "none" {
+		return "No audio reported."
+	}
+	return "Included."
 }
 
 func isSDR(f ytDLPFormat) bool {
@@ -250,7 +276,7 @@ func usableSubtitleTracks(raw json.RawMessage, automatic bool) bool {
 
 func videoQualityOption(f ytDLPFormat, audio *ytDLPFormat) linkDownloadQualityData {
 	quality, size, acodec := f.FormatID, formatSize(f), f.ACodec
-	if f.ACodec == "none" || f.ACodec == "" {
+	if f.ACodec == "none" && audio != nil {
 		quality += "+" + audio.FormatID
 		acodec = audio.ACodec
 		if size > 0 && formatSize(*audio) > 0 {
@@ -273,12 +299,14 @@ func videoQualityOption(f ytDLPFormat, audio *ytDLPFormat) linkDownloadQualityDa
 		label += " · " + f.DynamicRange
 		picture += " with HDR colour"
 	}
-	label += " · " + readableCodec(f.VCodec)
+	if f.VCodec != "" {
+		label += " · " + readableCodec(f.VCodec)
+	}
 	playback := "Works in most media players."
 	if !strings.HasPrefix(readableCodec(f.VCodec), "H.264") {
 		playback = "May need a newer device or media player."
 	}
-	description := picture + ".\nSound: Included.\nDownload size: " + friendlyDownloadSize(size) + "\nPlayback: " + playback
+	description := picture + ".\nSound: " + sourceSoundDescription(acodec) + "\nDownload size: " + friendlyDownloadSize(size) + "\nPlayback: " + playback
 	technical := fmt.Sprintf("%d × %d; %s video + %s audio. Source video: %s. Original quality is preserved without re-encoding.", f.Width, f.Height, readableCodec(f.VCodec), readableCodec(acodec), strings.ToUpper(f.Ext))
 	return linkDownloadQualityData{Resolution: min(f.Width, f.Height), Label: label, Quality: quality, Description: description, TechnicalDetails: technical}
 }
