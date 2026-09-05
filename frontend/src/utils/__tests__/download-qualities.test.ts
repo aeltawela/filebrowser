@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   useDownloadQualities,
+  downloadLanguageName,
+  selectVisibleQuality,
+  filterAudioQualityOptions,
+  resolveAudioQuality,
+  videoDownloadExtras,
   resolveDownloadQualityOptions,
   defaultVideoQuality,
 } from "../download-qualities";
@@ -81,33 +86,164 @@ describe("download quality discovery", () => {
 });
 
 describe("direct download quality choices", () => {
-  const presets = [{ label: "4K", quality: defaultVideoQuality }];
   const original = {
     label: "Original file",
     quality: "best",
     description: "Original quality cannot be changed.",
   };
 
-  it("preserves strict video presets when auto discovery falls back to direct", () => {
+  it("does not invent video options when auto discovery falls back to direct", () => {
     expect(
       resolveDownloadQualityOptions(
         "auto",
         { ...response, downloader: "direct" },
-        presets,
         original
       )
-    ).toEqual(presets);
+    ).toEqual([]);
   });
 
   it("keeps only original file before or after failed explicit direct discovery", () => {
-    expect(
-      resolveDownloadQualityOptions("direct", null, presets, original)
-    ).toEqual([original]);
+    expect(resolveDownloadQualityOptions("direct", null, original)).toEqual([
+      original,
+    ]);
   });
 
-  it("retains strict 4K alongside discovered video formats", () => {
-    expect(
-      resolveDownloadQualityOptions("yt-dlp", response, presets, original)
-    ).toEqual([...presets, option]);
+  it("shows only verified source formats without synthetic presets", () => {
+    expect(resolveDownloadQualityOptions("yt-dlp", response, original)).toEqual(
+      [option]
+    );
   });
+});
+
+describe("download language and file choices", () => {
+  const translated = {
+    quality: "video+french",
+    description: "Sound: French",
+    technicalDetails: "fr",
+  };
+  const choices: LinkDownloadQualityOption[] = [
+    {
+      label: "4K",
+      quality: defaultVideoQuality,
+      audioVariants: { fr: translated },
+    },
+    { label: "1080p", quality: "video+original" },
+  ];
+
+  it("shows only qualities that support the chosen audio language", () => {
+    expect(filterAudioQualityOptions(choices, "fr")).toEqual([choices[0]]);
+    expect(filterAudioQualityOptions(choices, "")).toEqual(choices);
+  });
+
+  it("uses the exact language variant for both download and explanation", () => {
+    expect(resolveAudioQuality(choices[0], "fr")).toEqual(translated);
+    expect(resolveAudioQuality(choices[1], "fr")).toBeUndefined();
+    expect(resolveAudioQuality(choices[1], "")).toEqual(choices[1]);
+  });
+
+  it("omits video extras from direct requests and empty subtitle choices", () => {
+    expect(videoDownloadExtras("direct", "mp4", "fr")).toEqual({});
+    expect(videoDownloadExtras("yt-dlp", "mp4", "fr", true)).toEqual({});
+    expect(videoDownloadExtras("auto", "mkv", "")).toEqual({
+      container: "mkv",
+    });
+    expect(videoDownloadExtras("yt-dlp", "mp4", "fr")).toEqual({
+      container: "mp4",
+      subtitleLanguage: "fr",
+    });
+  });
+});
+
+describe("source option presentation", () => {
+  it("keeps the list empty before verified discovery", () => {
+    expect(
+      resolveDownloadQualityOptions("auto", null, {
+        label: "Original",
+        quality: "best",
+      })
+    ).toEqual([]);
+    expect(
+      resolveDownloadQualityOptions(
+        "auto",
+        { ...response, verified: false },
+        { label: "Original", quality: "best" }
+      )
+    ).toEqual([]);
+  });
+  it("hides codec alternatives until more options are requested", () => {
+    const advanced = {
+      label: "1080p AV1",
+      quality: "av1+audio",
+      advanced: true,
+    };
+    expect(filterAudioQualityOptions([option, advanced], "")).toEqual([option]);
+    expect(filterAudioQualityOptions([option, advanced], "", true)).toEqual([
+      option,
+      advanced,
+    ]);
+  });
+  it("puts the source recommended option first", () => {
+    const recommended = {
+      ...option,
+      quality: "recommended",
+      recommended: true,
+    };
+    expect(
+      resolveDownloadQualityOptions(
+        "auto",
+        { ...response, options: [option, recommended] },
+        option
+      )[0]
+    ).toEqual(recommended);
+  });
+});
+
+describe("selection after filtering", () => {
+  const main = { label: "4K", quality: "main", recommended: true };
+  it("selects the recommended main choice when an advanced choice is hidden", () => {
+    expect(selectVisibleQuality("advanced", [option, main], false)).toBe(
+      "main"
+    );
+  });
+  it("selects an available language choice rather than retaining an unavailable selection", () => {
+    expect(selectVisibleQuality("original-language", [option], true)).toBe(
+      option.quality
+    );
+  });
+  it("preserves a visible choice and manual mode while advanced options are shown", () => {
+    expect(selectVisibleQuality(option.quality, [option, main], false)).toBe(
+      option.quality
+    );
+    expect(selectVisibleQuality("custom", [option], true)).toBe("custom");
+    expect(selectVisibleQuality("custom", [option], false)).toBe(
+      option.quality
+    );
+  });
+});
+
+it("promotes the first language-supported format per resolution", () => {
+  const english = {
+    label: "1080p",
+    quality: "english",
+    resolution: 1080,
+    audioVariants: { en: { quality: "english", description: "English" } },
+  };
+  const german = {
+    label: "1080p",
+    quality: "german",
+    resolution: 1080,
+    advanced: true,
+    audioVariants: { de: { quality: "german", description: "German" } },
+  };
+  const alternative = { ...german, quality: "german-other" };
+  expect(
+    filterAudioQualityOptions([english, german, alternative], "de")
+  ).toEqual([german]);
+  expect(
+    filterAudioQualityOptions([english, german, alternative], "de", true)
+  ).toEqual([german, alternative]);
+});
+
+it("names original subtitle language selectors without changing the selector", () => {
+  expect(downloadLanguageName("en-orig")).toBe("English");
 });

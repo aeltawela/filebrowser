@@ -118,19 +118,19 @@ func TestQualityOptionsFromFormats(t *testing.T) {
 		{FormatID: "140", VCodec: "none", ACodec: "mp4a", Ext: "m4a", Filesize: 1000},
 		{FormatID: "401", Width: 3840, Height: 2160, FPS: 60, DynamicRange: "HDR10", VCodec: "av01", ACodec: "none", Ext: "mp4", Filesize: 9000},
 	})
-	if options[0].Quality != settings.DefaultLinkDownloadQuality {
-		t.Fatal("4K must remain the default")
+	if options[0].Quality != "401+140" {
+		t.Fatal("exact 4K stream must be the source default")
 	}
 	var found bool
 	for _, option := range options {
 		if option.Quality == "401+140" {
 			found = true
-			for _, detail := range []string{"4K", "60 fps", "HDR10", "MKV"} {
+			for _, detail := range []string{"4K", "60 fps", "HDR10"} {
 				if !strings.Contains(option.Label, detail) {
 					t.Errorf("missing %q in %q", detail, option.Label)
 				}
 			}
-			if !strings.Contains(option.Description, "audio") || !strings.Contains(option.Description, "9.8 KiB") {
+			if !strings.Contains(option.Description, "Sound: Included") || !strings.Contains(option.Description, "10.0 KB") {
 				t.Errorf("missing merged size/audio explanation: %s", option.Description)
 			}
 		}
@@ -378,7 +378,7 @@ func TestQualityOptionsUseReadableCodecFamilies(t *testing.T) {
 	for _, option := range options {
 		if strings.HasPrefix(option.Quality, "old+") || strings.HasPrefix(option.Quality, "preferred+") {
 			count++
-			if !strings.HasSuffix(option.Label, "VP9 (8-bit)") || !strings.Contains(option.Description, "AAC audio") {
+			if !strings.HasSuffix(option.Label, "VP9 (8-bit)") || !strings.Contains(option.TechnicalDetails, "AAC audio") {
 				t.Errorf("not human-readable: %+v", option)
 			}
 			if option.Quality != "preferred+audio" {
