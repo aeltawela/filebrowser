@@ -62,6 +62,12 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			return http.StatusForbidden, nil
 		}
 
+		// Serialize with concurrent PATCH/DELETE on the same upload: an
+		// override-POST truncates the file and re-registers the length, which
+		// must not interleave with a PATCH stat→compare→write.
+		unlock := lockTUSUpload(d.user.Username + "\x00" + r.URL.Path)
+		defer unlock()
+
 		file, err := files.NewFileInfo(&files.FileOptions{
 			Fs:         d.user.Fs,
 			Path:       r.URL.Path,
@@ -202,6 +208,16 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 		return http.StatusBadRequest, fmt.Errorf("invalid upload offset")
 	}
 
+	// GHSA-4r8p-gqj2-mwgm: serialize PATCHes for one upload. Without this,
+	// concurrent PATCHes at the same offset all pass the stat check before
+	// any of them writes, and O_APPEND lands every body at end-of-file, so
+	// the stored file exceeds Upload-Length. Holding this lock across stat,
+	// compare, write and completion makes the second racer see the winner's
+	// bytes and lose with 409, and makes completion (cache + hook) happen
+	// exactly once: the loser finds no active upload and gets 404.
+	unlock := lockTUSUpload(d.user.Username + "\x00" + r.URL.Path)
+	defer unlock()
+
 	file, err := files.NewFileInfo(&files.FileOptions{
 		Fs:         d.user.Fs,
 		Path:       r.URL.Path,
@@ -298,6 +314,11 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 		if r.URL.Path == "/" || !d.user.Perm.Delete {
 			return http.StatusForbidden, nil
 		}
+
+		// Serialize with in-flight PATCHes on the same upload so a delete
+		// cannot interleave with a concurrent write.
+		unlock := lockTUSUpload(d.user.Username + "\x00" + r.URL.Path)
+		defer unlock()
 
 		file, err := files.NewFileInfo(&files.FileOptions{
 			Fs:         d.user.Fs,
