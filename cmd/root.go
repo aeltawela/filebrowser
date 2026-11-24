@@ -167,6 +167,12 @@ user created with the credentials from options "username" and "password".`,
 			}
 		}
 
+		// Proxy auth without a trust anchor lets any direct client impersonate
+		// a user by setting a header. Refuse to start instead of only warning.
+		if err := validateProxyAuthConfig(st.Storage); err != nil {
+			return err
+		}
+
 		var fileCache diskcache.Interface = diskcache.NewNoOp()
 		cacheDir := v.GetString("cacheDir")
 		if cacheDir != "" {
@@ -307,6 +313,32 @@ func warnIfVideoThumbnailsUnavailable(server *settings.Server, videoThumbService
 	if err := videoThumbService.Available(); err != nil {
 		log.Printf("[WARN] Video thumbnails unavailable: %v. Install ffmpeg and ffprobe, or use a Docker image that includes them.", err)
 	}
+}
+
+// validateProxyAuthConfig is a startup gate: proxy authentication is only
+// safe when the identity header is anchored to a trusted source address or a
+// shared secret. The explicit allowUntrusted flag is the sole escape hatch.
+func validateProxyAuthConfig(st *storage.Storage) error {
+	set, err := st.Settings.Get()
+	if err != nil {
+		return err
+	}
+	if set.AuthMethod != auth.MethodProxyAuth {
+		return nil
+	}
+
+	auther, err := st.Auth.Get(auth.MethodProxyAuth)
+	if err != nil {
+		return err
+	}
+	proxy, ok := auther.(*auth.ProxyAuth)
+	if !ok {
+		return fmt.Errorf("proxy auth has an unexpected auther type %T", auther)
+	}
+	if err := proxy.ValidateTrustConfig(); err != nil {
+		return fmt.Errorf("refusing to start: %w", err)
+	}
+	return nil
 }
 
 func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, error) {
