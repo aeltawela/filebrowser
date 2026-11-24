@@ -151,6 +151,10 @@ var userPostHandler = withAdmin(func(w http.ResponseWriter, r *http.Request, d *
 		return http.StatusBadRequest, fberrors.ErrEmptyPassword
 	}
 
+	// Session epochs start at zero for every new account, regardless of what a
+	// client puts in the JSON payload.
+	req.Data.TokenVersion = 0
+
 	req.Data.Password, err = users.ValidateAndHashPwd(req.Data.Password, d.settings.MinimumPasswordLength)
 	if err != nil {
 		return http.StatusBadRequest, err
@@ -207,6 +211,14 @@ var userPutHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request
 	if req.Data.ID != d.raw.(uint) {
 		return http.StatusBadRequest, nil
 	}
+
+	// TokenVersion is server-owned. Copy the stored value so a client cannot
+	// reset it by including the field in a full ("all") update payload.
+	stored, err := d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, req.Data.ID)
+	if err != nil {
+		return errToStatus(err), err
+	}
+	req.Data.TokenVersion = stored.TokenVersion
 
 	for _, field := range req.Which {
 		if strings.ToLower(field) == "perm" || strings.ToLower(field) == "all" {

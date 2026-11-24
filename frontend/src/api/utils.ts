@@ -54,7 +54,7 @@ export async function fetchURL(
     );
 
     if (auth && res.status == 401) {
-      logout();
+      await logout();
     }
 
     throw error;

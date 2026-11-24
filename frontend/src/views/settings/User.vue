@@ -147,7 +147,7 @@ const deleteUser = async (currentPassword: string) => {
   try {
     await api.remove(user.value.id, currentPassword);
     if (user.value.id == authStore.user?.id) {
-      logout();
+      await logout();
     } else {
       router.push({ path: "/settings/users" });
     }

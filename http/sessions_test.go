@@ -4,6 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/filebrowser/filebrowser/v2/settings"
 	"github.com/filebrowser/filebrowser/v2/storage"
 	"github.com/filebrowser/filebrowser/v2/users"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 )
 
@@ -340,5 +344,244 @@ func TestProxyAssertsRequiresTrustAnchor(t *testing.T) {
 	}
 	if !attempt("10.1.2.3:1234") {
 		t.Error("identity header from a trusted proxy is rejected")
+	}
+}
+
+func signTokenWithVersion(t *testing.T, key []byte, id uint, ver uint64) string {
+	t.Helper()
+	claims := &authToken{
+		User: userInfo{ID: id, Username: "u", Perm: users.Permissions{Download: true}},
+		Ver:  ver,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(key)
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+	return signed
+}
+
+// GHSA-7xwp-2cpp-p8r7: logout must revoke the token server-side.
+func TestLogoutRevokesToken(t *testing.T) {
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true}
+	st, server := newSessionStore(t, perm, key)
+	protected := protectedSessionHandler(st, server)
+	logout := handle(logoutHandler, "", st, server)
+	token := signToken(t, perm, key)
+
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("token should be valid before logout, got %d", rec.Code)
+	}
+
+	rec := sessionRequest(logout, http.MethodPost, "/logout", token, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout returned %d, body=%q; want 204", rec.Code, rec.Body.String())
+	}
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("VULNERABLE: revoked token still authenticates after logout: %d", rec.Code)
+	}
+}
+
+// GHSA-v7vv-5wj2-gfcj: security-sensitive user updates must revoke all tokens
+// previously issued to that user, including admin-initiated password resets.
+func TestPasswordResetRevokesToken(t *testing.T) {
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true}
+	st, server := newSessionStore(t, perm, key)
+	protected := protectedSessionHandler(st, server)
+	token := signToken(t, perm, key)
+
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("token should be valid before reset, got %d", rec.Code)
+	}
+
+	put := handle(userPutHandler, "", st, server)
+	reset := `{"what":"user","which":["password"],"data":{"id":1,"password":"NewStrongPass123!"}}`
+	rec := httptest.NewRecorder()
+	put.ServeHTTP(rec, putUserRequest(token, reset))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("password reset returned %d, body=%q; want 200", rec.Code, rec.Body.String())
+	}
+
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("VULNERABLE: token issued before password reset still authenticates: %d", rec.Code)
+	}
+
+	// Permission, lock, and scope changes must revoke as well.
+	for name, field := range map[string]string{"perm": "perm", "lock": "lockPassword", "scope": "scope"} {
+		t.Run(name, func(t *testing.T) {
+			perm := users.Permissions{Admin: true, Download: true}
+			st, server := newSessionStore(t, perm, key)
+			protected := protectedSessionHandler(st, server)
+			tok := signToken(t, perm, key)
+			body := `{"what":"user","which":["` + field + `"],"data":{"id":1,"lockPassword":true,"perm":{"download":true},"scope":"/"}}`
+			rec := httptest.NewRecorder()
+			handle(userPutHandler, "", st, server).ServeHTTP(rec, putUserRequest(tok, body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s update returned %d, body=%q", name, rec.Code, rec.Body.String())
+			}
+			if rec := sessionRequest(protected, http.MethodGet, "/", tok, ""); rec.Code != http.StatusUnauthorized {
+				t.Errorf("VULNERABLE: token survives %s change: %d", name, rec.Code)
+			}
+		})
+	}
+}
+
+// A forged or stale ver claim must be rejected; a token with no claim is only
+// valid while the stored version is still zero.
+func TestTokenVersionMismatchRejected(t *testing.T) {
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true}
+	st, server := newSessionStore(t, perm, key)
+	protected := protectedSessionHandler(st, server)
+
+	if rec := sessionRequest(protected, http.MethodGet, "/", signTokenWithVersion(t, key, 1, 99), ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("VULNERABLE: a token with a mismatched ver was accepted: %d", rec.Code)
+	}
+	if rec := sessionRequest(protected, http.MethodGet, "/", signToken(t, perm, key), ""); rec.Code != http.StatusOK {
+		t.Errorf("a claim-less token should be valid at version 0, got %d", rec.Code)
+	}
+}
+
+// Renewal must re-read the stored version and must not extend a revoked token.
+func TestRenewDoesNotResurrectRevokedToken(t *testing.T) {
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true}
+	st, server := newSessionStore(t, perm, key)
+	logout := handle(logoutHandler, "", st, server)
+	token := signToken(t, perm, key)
+
+	if rec := sessionRequest(logout, http.MethodPost, "/logout", token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("logout returned %d", rec.Code)
+	}
+	renew := sessionRequest(handle(renewHandler(time.Hour), "", st, server), http.MethodPost, "/renew", token, "")
+	if renew.Code != http.StatusUnauthorized {
+		t.Errorf("VULNERABLE: revoked token was renewed: %d", renew.Code)
+	}
+}
+
+// Hook auth rebuilds the user record from scratch on every login and then
+// full-saves it. That save must preserve the live session epoch: otherwise a
+// benign re-login resets the version to zero and undoes logout and
+// password-reset revocation. And when the login does revoke (a sensitive field
+// changed), the freshly minted token must carry the new epoch or login itself
+// breaks.
+func TestHookAuthLoginPreservesAndAdvancesEpoch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell hook")
+	}
+
+	key := []byte("test-signing-key")
+	st, server := newSessionStore(t, users.Permissions{Download: true}, key)
+
+	if err := st.Settings.Save(&settings.Settings{
+		Key: key, AuthMethod: fbAuth.MethodHookAuth, LogoutPage: settings.DefaultLogoutPage,
+		CreateUserDir: true, UserHomeBasePath: "/users",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeScript := func(body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "hook.sh")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	// An innocuous extra field forces the update branch on every login without
+	// changing anything security-sensitive.
+	if err := st.Auth.Save(&fbAuth.HookAuth{Command: writeScript("echo hook.action=auth\necho user.locale=en\n")}); err != nil {
+		t.Fatal(err)
+	}
+
+	login := handle(loginHandler(time.Hour), "", st, server)
+	protected := protectedSessionHandler(st, server)
+	logout := handle(logoutHandler, "", st, server)
+	creds := `{"username":"hookuser","password":"HookPass123!"}`
+
+	loginAs := func() string {
+		t.Helper()
+		rec := sessionRequest(login, http.MethodPost, "/login", "", creds)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("hook login returned %d, body=%q; want 200", rec.Code, rec.Body.String())
+		}
+		return strings.TrimSpace(rec.Body.String())
+	}
+	mustAuthenticate := func(token string) {
+		t.Helper()
+		if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusOK {
+			t.Fatalf("freshly minted token rejected with %d; want 200", rec.Code)
+		}
+	}
+	mustReject := func(token, why string) {
+		t.Helper()
+		if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("VULNERABLE: %s: token authenticates with %d; want 401", why, rec.Code)
+		}
+	}
+
+	token1 := loginAs()
+	mustAuthenticate(token1)
+
+	if rec := sessionRequest(logout, http.MethodPost, "/logout", token1, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("logout returned %d, body=%q; want 204", rec.Code, rec.Body.String())
+	}
+	mustReject(token1, "token issued before logout")
+
+	// Benign re-login: the same hook output changes nothing sensitive, so the
+	// epoch stays at 1, the new token works, and the logged-out token stays
+	// dead. Before the fix the full save reset the epoch to 0 and token1 came
+	// back to life.
+	token2 := loginAs()
+	mustAuthenticate(token2)
+	mustReject(token1, "revocation undone by benign hook re-login")
+
+	// Sensitive change: the hook now returns a different scope, which revokes.
+	// The new token must carry the bumped epoch (before the fix it carried a
+	// stale zero and every request after login returned 401).
+	if err := st.Auth.Save(&fbAuth.HookAuth{Command: writeScript("echo hook.action=auth\necho user.scope=/other\n")}); err != nil {
+		t.Fatal(err)
+	}
+	token3 := loginAs()
+	mustAuthenticate(token3)
+	mustReject(token2, "token issued before the scope change")
+}
+
+// A token naming a user that no longer exists is an authentication failure,
+// not a server error: it must fail closed with 401 without tripping 5xx
+// alerting.
+func TestTokenForDeletedUserIsUnauthorized(t *testing.T) {
+	key := []byte("test-signing-key")
+	st, server := newSessionStore(t, users.Permissions{Download: true}, key)
+	protected := protectedSessionHandler(st, server)
+
+	ghost := signTokenWithVersion(t, key, 999, 0)
+	if rec := sessionRequest(protected, http.MethodGet, "/", ghost, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("token for a deleted user returned %d; want 401", rec.Code)
+	}
+}
+
+// Changing a user's access rules revokes outstanding tokens, like any other
+// permission change: the stored rules are part of what the token authorizes.
+func TestRuleChangeRevokesToken(t *testing.T) {
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true, Admin: true}
+	st, server := newSessionStore(t, perm, key)
+	protected := protectedSessionHandler(st, server)
+	token := signToken(t, perm, key)
+
+	put := handle(userPutHandler, "", st, server)
+	body := `{"what":"user","which":["rules"],"data":{"id":1,"rules":[{"path":"/secret","allow":false}]}}`
+	rec := httptest.NewRecorder()
+	put.ServeHTTP(rec, putUserRequest(token, body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rules update returned %d, body=%q; want 200", rec.Code, rec.Body.String())
+	}
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("VULNERABLE: token survives an access-rule change: %d", rec.Code)
 	}
 }
