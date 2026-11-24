@@ -475,3 +475,58 @@ func TestTUSConcurrentPatchesRespectLength(t *testing.T) {
 		t.Fatalf("VULNERABLE: completion fired %d times, want exactly 1", got)
 	}
 }
+
+// GHSA-ffx7-75gc-jg7c: negative Upload-Length is already rejected; negative
+// Upload-Offset must be rejected too. Neither may complete an upload.
+func TestTUSRejectsNegativeLengthAndOffset(t *testing.T) {
+	cache := newCountingCache()
+	f := newW3TusFixture(t, cache)
+
+	// Negative length: POST itself must fail.
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/api/tus/neg.bin?override=false", http.NoBody)
+	req.Header.Set("X-Auth", f.token)
+	req.Header.Set("Upload-Length", "-1")
+	res, err := f.client.Do(req)
+	if err != nil {
+		t.Fatalf("POST negative length: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST Upload-Length -1: status=%d body=%q, want 400", res.StatusCode, body)
+	}
+
+	// Negative offset: PATCH must fail with 400 (not 409, not success).
+	req, _ = http.NewRequest(http.MethodPost, f.srv.URL+"/api/tus/off.bin?override=false", http.NoBody)
+	req.Header.Set("X-Auth", f.token)
+	req.Header.Set("Upload-Length", "5")
+	res, err = f.client.Do(req)
+	if err != nil {
+		t.Fatalf("POST create: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("POST create: status %d", res.StatusCode)
+	}
+	uploadURL := f.srv.URL + res.Header.Get("Location")
+
+	req, _ = http.NewRequest(http.MethodPatch, uploadURL, strings.NewReader("hello"))
+	req.Header.Set("X-Auth", f.token)
+	req.Header.Set("Content-Type", "application/offset+octet-stream")
+	req.Header.Set("Upload-Offset", "-1")
+	res, err = f.client.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH negative offset: %v", err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("VULNERABLE: PATCH Upload-Offset -1: status=%d body=%q, want 400", res.StatusCode, body)
+	}
+	if fi, err := os.Stat(filepath.Join(f.scope, "off.bin")); err == nil && fi.Size() != 0 {
+		t.Fatalf("negative-offset PATCH wrote %d bytes", fi.Size())
+	}
+	if got := cache.count("/off.bin"); got != 0 {
+		t.Fatalf("negative-offset PATCH completed the upload %d times", got)
+	}
+}
