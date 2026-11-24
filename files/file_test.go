@@ -1,6 +1,7 @@
 package files
 
 import (
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -500,5 +501,68 @@ func TestResolveVirtualKeepsNonexistentTail(t *testing.T) {
 				t.Fatalf("VULNERABLE to false-deny: resolved to %q, want the full tail", got)
 			}
 		})
+	}
+}
+
+// GHSA-7xqm-7738-642x: text content reads must stay bounded even when the
+// file is larger than the stat-based text gate allows.
+func TestReadTextContentBounded(t *testing.T) {
+	fs := afero.NewOsFs()
+	dir := t.TempDir()
+
+	small := filepath.Join(dir, "small.txt")
+	if err := os.WriteFile(small, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readTextContent(fs, small)
+	if err != nil || got != "hello" {
+		t.Fatalf("small file round-trip failed: %q, %v", got, err)
+	}
+
+	big := filepath.Join(dir, "big.txt")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(MaxTextContentBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	if _, err := readTextContent(fs, big); !errors.Is(err, ErrTextTooLarge) {
+		t.Fatalf("VULNERABLE: oversized read was not refused, got %v", err)
+	}
+}
+
+// A file above the cap must never be classified as text, so no handler loads
+// its content for preview or editing.
+func TestDetectTypeLargeFileNotText(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.txt")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(MaxTextContentBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	info, err := NewFileInfo(&FileOptions{
+		Fs:      afero.NewBasePathFs(afero.NewOsFs(), dir),
+		Path:    "/big.txt",
+		Modify:  true,
+		Expand:  true,
+		Content: true,
+		Checker: allowAllChecker{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Type == "text" || info.Type == "textImmutable" {
+		t.Fatalf("VULNERABLE: oversized file classified as %q", info.Type)
+	}
+	if info.Content != "" {
+		t.Fatal("oversized file content was loaded into memory")
 	}
 }
