@@ -8,6 +8,7 @@ import (
 
 	"github.com/tomasen/realip"
 
+	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/rules"
 	"github.com/filebrowser/filebrowser/v2/runner"
 	"github.com/filebrowser/filebrowser/v2/settings"
@@ -44,8 +45,30 @@ func (d *data) Check(path string) bool {
 
 // CheckRules reports whether the global and user rules allow path. Unlike
 // Check, it ignores HideDotfiles: hiding dotfiles is a display preference, so
-// it must not stop a user from operating on a tree that contains one.
+// it must not stop a user from operating on a tree that contains one. It
+// evaluates rules against the lexical path as a cheap defense-in-depth pass,
+// and also against the resolved virtual path so a symlink alias cannot bypass a
+// deny rule.
 func (d *data) CheckRules(path string) bool {
+	if d.user != nil {
+		files.SetRuleChecker(d.user.Fs, d)
+	}
+
+	if !d.checkRulesLexical(path) {
+		return false
+	}
+
+	resolved, ok := d.resolveRulePath(path)
+	if !ok {
+		return false
+	}
+	if resolved == path {
+		return true
+	}
+	return d.checkRulesLexical(resolved)
+}
+
+func (d *data) checkRulesLexical(path string) bool {
 	path = d.rulePath(path)
 
 	allow := true
@@ -62,6 +85,20 @@ func (d *data) CheckRules(path string) bool {
 	}
 
 	return allow
+}
+
+func (d *data) resolveRulePath(path string) (string, bool) {
+	if d.user == nil || d.user.Fs == nil {
+		return path, true
+	}
+	resolved, ok, err := files.ResolveVirtual(d.user.Fs, path)
+	if err != nil {
+		return "", false
+	}
+	if !ok {
+		return path, true
+	}
+	return resolved, true
 }
 
 // rulePath canonicalizes path into the form the rules are written in.

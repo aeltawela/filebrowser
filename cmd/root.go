@@ -454,6 +454,8 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 		log.Println("WARNING: Symlinks pointing outside a user's scope will be followed,")
 		log.Println("WARNING: which can expose files outside that scope. Only enable this if")
 		log.Println("WARNING: you fully understand and trust the contents of every user scope.")
+		log.Println("WARNING: Deny rules cannot cover targets outside the scope: rules name")
+		log.Println("WARNING: in-scope virtual paths, so external targets have no rule to match.")
 	}
 
 	// GHSA-6759-996p-gpj6: signup that cannot derive a per-user scope would
