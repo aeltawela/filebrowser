@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -316,5 +317,161 @@ func TestArchiveBudgetAddBytes(t *testing.T) {
 	b.bytes = ArchiveMaxTotalBytes
 	if err := b.addBytes(1); err == nil {
 		t.Fatal("expected ErrArchiveTooLarge once the byte bound is exceeded")
+	}
+}
+
+// countingCache decorates an UploadCache and records completion calls, so
+// tests can prove the upload hook path fires exactly once.
+type countingCache struct {
+	UploadCache
+	mu        sync.Mutex
+	completes map[string]int
+}
+
+func newCountingCache() *countingCache {
+	c := &countingCache{completes: map[string]int{}}
+	c.UploadCache = newMemoryUploadCache()
+	return c
+}
+
+func (c *countingCache) Complete(path string) {
+	c.mu.Lock()
+	c.completes[path]++
+	c.mu.Unlock()
+	c.UploadCache.Complete(path)
+}
+
+func (c *countingCache) count(path string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// ScopedFs RealPath may resolve host symlinks (e.g. TMPDIR), so match by
+	// trailing virtual path instead of exact string equality.
+	n := 0
+	for k, v := range c.completes {
+		if strings.HasSuffix(k, path) {
+			n += v
+		}
+	}
+	return n
+}
+
+// w3TusFixture is newTusTestFixture with a caller-supplied cache.
+type w3TusFixture struct {
+	srv    *httptest.Server
+	client *http.Client
+	token  string
+	scope  string
+	cache  *countingCache
+}
+
+func newW3TusFixture(t *testing.T, cache *countingCache) *w3TusFixture {
+	t.Helper()
+	root := t.TempDir()
+	scope := filepath.Join(root, "user")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Create: true, Modify: true}
+	st := scopedUserStorage(t, scope, perm, key)
+	t.Cleanup(cache.Close)
+	srv := newTusTestServer(t, st, cache)
+	return &w3TusFixture{srv: srv, client: srv.Client(), token: signToken(t, perm, key), scope: scope, cache: cache}
+}
+
+// GHSA-4r8p-gqj2-mwgm: concurrent PATCHes at the same offset must not write
+// past Upload-Length, and completion must happen exactly once.
+//
+// The bodies are delivered through pipes that stay empty until every handler
+// has arrived: no handler can observe another's bytes during the stat check,
+// so on the unfixed code every PATCH passes the offset check and appends.
+func TestTUSConcurrentPatchesRespectLength(t *testing.T) {
+	const length = 1 << 20
+	const racers = 8
+
+	cache := newCountingCache()
+	f := newW3TusFixture(t, cache)
+
+	req, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/api/tus/race.bin?override=false", http.NoBody)
+	req.Header.Set("X-Auth", f.token)
+	req.Header.Set("Upload-Length", strconv.Itoa(length))
+	res, err := f.client.Do(req)
+	if err != nil {
+		t.Fatalf("POST create: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("POST create: status %d", res.StatusCode)
+	}
+	uploadURL := f.srv.URL + res.Header.Get("Location")
+
+	payload := bytes.Repeat([]byte{0x61}, length)
+	statuses := make([]int, racers)
+	var wg sync.WaitGroup
+	pipes := make([]*io.PipeWriter, racers)
+	for i := 0; i < racers; i++ {
+		pr, pw := io.Pipe()
+		pipes[i] = pw
+		r, err := http.NewRequest(http.MethodPatch, uploadURL, pr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("X-Auth", f.token)
+		r.Header.Set("Content-Type", "application/offset+octet-stream")
+		r.Header.Set("Upload-Offset", "0")
+		r.ContentLength = length
+		wg.Add(1)
+		go func(i int, r *http.Request) {
+			defer wg.Done()
+			resp, err := f.client.Do(r)
+			if err != nil {
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			statuses[i] = resp.StatusCode
+		}(i, r)
+	}
+
+	// Every handler is now started and blocked waiting for body bytes, so all
+	// of them stat size 0. Release the bodies in small trickles to keep the
+	// writes overlapped even on a slow scheduler.
+	time.Sleep(300 * time.Millisecond)
+	var ww sync.WaitGroup
+	for _, pw := range pipes {
+		ww.Add(1)
+		go func(pw *io.PipeWriter) {
+			defer ww.Done()
+			defer pw.Close()
+			for off := 0; off < len(payload); off += 64 << 10 {
+				end := min(off+(64<<10), len(payload))
+				if _, err := pw.Write(payload[off:end]); err != nil {
+					return
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}(pw)
+	}
+	ww.Wait()
+	wg.Wait()
+
+	winners := 0
+	for _, s := range statuses {
+		if s == http.StatusNoContent {
+			winners++
+		}
+	}
+	fi, err := os.Stat(filepath.Join(f.scope, "race.bin"))
+	if err != nil {
+		t.Fatalf("stat uploaded file: %v", err)
+	}
+	if fi.Size() != length {
+		t.Fatalf("VULNERABLE: concurrent PATCH wrote %d bytes for Upload-Length %d (winners=%d)", fi.Size(), length, winners)
+	}
+	if winners != 1 {
+		t.Fatalf("VULNERABLE: %d PATCHes succeeded, want exactly 1", winners)
+	}
+	if got := cache.count("/race.bin"); got != 1 {
+		t.Fatalf("VULNERABLE: completion fired %d times, want exactly 1", got)
 	}
 }
