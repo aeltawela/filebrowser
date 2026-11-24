@@ -123,6 +123,14 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 			return errToStatus(err), err
 		}
 
+		// A filesystem delete invalidates every link pointing at the path,
+		// including links owned by other users whose scope resolves the same
+		// file. This is not the share-management API, so it must not be
+		// owner-filtered: a surviving link would serve whatever file later
+		// appears at that path. It runs after the delete succeeded, so a
+		// failed delete never drops links that are still valid.
+		dropShares(d, file.Path)
+
 		return http.StatusNoContent, nil
 	})
 }
