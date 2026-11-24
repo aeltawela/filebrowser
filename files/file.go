@@ -32,6 +32,36 @@ var (
 	reSubExts = regexp.MustCompile("(?i)(.vtt|.srt|.ass|.ssa)$")
 )
 
+// MaxTextContentBytes bounds how much file content is read into memory for
+// text preview and editing (GHSA-7xqm-7738-642x). Larger files are never
+// classified as text, and reads stay bounded even if a file grows between the
+// size check and the read.
+const MaxTextContentBytes = 10 * 1024 * 1024
+
+// ErrTextTooLarge is returned when a file exceeds MaxTextContentBytes at read
+// time even though its stat size passed the text gate (a grow-between-stat-
+// and-read race). The request fails closed instead of buffering the file.
+var ErrTextTooLarge = errors.New("file content exceeds the text read limit")
+
+// readTextContent reads a text file with a hard bound. The extra byte lets the
+// reader detect overflow instead of silently truncating.
+func readTextContent(fs afero.Fs, name string) (string, error) {
+	f, err := fs.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, MaxTextContentBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > MaxTextContentBytes {
+		return "", ErrTextTooLarge
+	}
+	return string(data), nil
+}
+
 // FileInfo describes a file.
 type FileInfo struct {
 	*Listing
@@ -267,7 +297,7 @@ func (i *FileInfo) detectType(modify, saveContent, readHeader bool, calcImgRes b
 	case strings.HasSuffix(mimetype, "pdf"):
 		i.Type = "pdf"
 		return nil
-	case strings.HasPrefix(mimetype, "text") && i.Size <= 10*1024*1024: // 10 MB
+	case strings.HasPrefix(mimetype, "text") && i.Size <= MaxTextContentBytes: // 10 MB
 		i.Type = "text"
 
 		if !modify {
@@ -275,16 +305,15 @@ func (i *FileInfo) detectType(modify, saveContent, readHeader bool, calcImgRes b
 		}
 
 		if saveContent {
-			afs := &afero.Afero{Fs: i.Fs}
-			content, err := afs.ReadFile(i.Path)
+			content, err := readTextContent(i.Fs, i.Path)
 			if err != nil {
 				return err
 			}
 
-			i.Content = string(content)
+			i.Content = content
 		}
 		return nil
-	case i.Size <= 10*1024*1024 && (!readHeader || !isBinary(readBuffer())): // 10 MB
+	case i.Size <= MaxTextContentBytes && (!readHeader || !isBinary(readBuffer())): // 10 MB
 		i.Type = "text"
 
 		if !modify {
@@ -292,13 +321,12 @@ func (i *FileInfo) detectType(modify, saveContent, readHeader bool, calcImgRes b
 		}
 
 		if saveContent {
-			afs := &afero.Afero{Fs: i.Fs}
-			content, err := afs.ReadFile(i.Path)
+			content, err := readTextContent(i.Fs, i.Path)
 			if err != nil {
 				return err
 			}
 
-			i.Content = string(content)
+			i.Content = content
 		}
 		return nil
 	default:
