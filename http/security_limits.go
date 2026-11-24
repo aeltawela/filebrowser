@@ -2,6 +2,7 @@ package fbhttp
 
 import (
 	"errors"
+	"os"
 )
 
 // Named bounds for user-controlled input sizes (W3 hardening).
@@ -29,3 +30,60 @@ var (
 	errSubtitleTooLarge       = errors.New("subtitle exceeds size limit")
 	errSubtitleOutputTooLarge = errors.New("subtitle output exceeds size limit")
 )
+
+// GHSA-8q5j-8wcr-8v2v — archive walks blocked forever on FIFOs and had no
+// bound on entry count or total bytes.
+const (
+	// ArchiveMaxEntries caps the number of entries collected during a single
+	// archive walk. Exceeding it aborts the request with 413.
+	ArchiveMaxEntries = 10000
+
+	// ArchiveMaxTotalBytes caps the summed logical size of archived regular
+	// files, enforced during the walk before the archiver runs.
+	ArchiveMaxTotalBytes = int64(1 << 30) // 1 GiB
+)
+
+// ErrArchiveTooLarge reports that an archive walk exceeded ArchiveMaxEntries
+// or ArchiveMaxTotalBytes. Handlers map it to 413.
+var ErrArchiveTooLarge = errors.New("archive exceeds entry or byte limit")
+
+// archiveBudget enforces ArchiveMaxEntries/ArchiveMaxTotalBytes while walking.
+type archiveBudget struct {
+	entries int
+	bytes   int64
+}
+
+func (b *archiveBudget) add(isDir bool, size int64) error {
+	b.entries++
+	if !isDir {
+		b.bytes += size
+	}
+	if b.entries > ArchiveMaxEntries || b.bytes > ArchiveMaxTotalBytes {
+		return ErrArchiveTooLarge
+	}
+	return nil
+}
+
+// addBytes charges post-walk growth against the byte budget only. The entry
+// was already counted at walk time, so counting it again would double-count
+// and could spuriously reject a legitimate archive near the entry limit.
+func (b *archiveBudget) addBytes(size int64) error {
+	b.bytes += size
+	if b.bytes > ArchiveMaxTotalBytes {
+		return ErrArchiveTooLarge
+	}
+	return nil
+}
+
+// isNonRegularFile reports modes that must never be opened for download or
+// archiving: named pipes block in open(2) with no writer attached, and
+// sockets/devices have no business in an archive. Symlinks are not flagged
+// here — Stat follows them, so a link to a regular file still serves — but a
+// link resolving to one of these modes is caught by re-statting the target.
+func isNonRegularFile(mode os.FileMode) bool {
+	return mode&os.ModeNamedPipe != 0 ||
+		mode&os.ModeSocket != 0 ||
+		mode&os.ModeDevice != 0 ||
+		mode&os.ModeCharDevice != 0 ||
+		mode&os.ModeIrregular != 0
+}

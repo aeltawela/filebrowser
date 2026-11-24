@@ -103,7 +103,7 @@ var rawHandler = withUser(func(w http.ResponseWriter, r *http.Request, d *data) 
 	return rawDirHandler(w, r, d, file)
 })
 
-func getFiles(d *data, path, commonPath string) ([]archives.FileInfo, error) {
+func getFiles(d *data, path, commonPath string, budget *archiveBudget) ([]archives.FileInfo, error) {
 	if !d.Check(path) {
 		return nil, nil
 	}
@@ -116,6 +116,15 @@ func getFiles(d *data, path, commonPath string) ([]archives.FileInfo, error) {
 	var archiveFiles []archives.FileInfo
 
 	if path != commonPath {
+		// GHSA-8q5j-8wcr-8v2v: never archive anything that is not a regular
+		// file or directory. Opening a FIFO blocks in open(2) forever when no
+		// writer is attached; sockets and devices have no place in an archive.
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return nil, nil
+		}
+		if err := budget.add(info.IsDir(), info.Size()); err != nil {
+			return nil, err
+		}
 		nameInArchive := strings.TrimPrefix(path, commonPath)
 		nameInArchive = strings.TrimPrefix(nameInArchive, string(filepath.Separator))
 		nameInArchive = filepath.ToSlash(nameInArchive)
@@ -137,6 +146,24 @@ func getFiles(d *data, path, commonPath string) ([]archives.FileInfo, error) {
 			FileInfo:      info,
 			NameInArchive: nameInArchive,
 			Open: func() (fs.File, error) {
+				// Re-check the type at open time: a regular file replaced by
+				// a FIFO between the walk and the archiving pass must still
+				// not be opened, or the request would hang in open(2).
+				st, statErr := d.user.Fs.Stat(path)
+				if statErr != nil {
+					return nil, statErr
+				}
+				if !st.IsDir() && !st.Mode().IsRegular() {
+					return nil, fmt.Errorf("refusing non-regular archive entry: %q", path)
+				}
+				// Re-check the size at open time: a file grown between the
+				// walk and the archiving pass counts its extra bytes against
+				// the budget instead of exceeding it silently.
+				if delta := st.Size() - info.Size(); delta > 0 {
+					if err := budget.addBytes(delta); err != nil {
+						return nil, err
+					}
+				}
 				return d.user.Fs.Open(path)
 			},
 		})
@@ -156,8 +183,13 @@ func getFiles(d *data, path, commonPath string) ([]archives.FileInfo, error) {
 
 		for _, name := range names {
 			fPath := filepath.Join(path, name)
-			subFiles, err := getFiles(d, fPath, commonPath)
+			subFiles, err := getFiles(d, fPath, commonPath, budget)
 			if err != nil {
+				// A breached archive bound aborts the whole request; other
+				// per-entry failures keep the previous skip-and-log behavior.
+				if errors.Is(err, ErrArchiveTooLarge) {
+					return nil, err
+				}
 				log.Printf("Failed to get files from %s: %v", fPath, err)
 				continue
 			}
@@ -181,10 +213,14 @@ func rawDirHandler(w http.ResponseWriter, r *http.Request, d *data, file *files.
 
 	commonDir := fileutils.CommonPrefix(filepath.Separator, filenames...)
 
+	budget := &archiveBudget{}
 	var allFiles []archives.FileInfo
 	for _, fname := range filenames {
-		archiveFiles, err := getFiles(d, fname, commonDir)
+		archiveFiles, err := getFiles(d, fname, commonDir, budget)
 		if err != nil {
+			if errors.Is(err, ErrArchiveTooLarge) {
+				return http.StatusRequestEntityTooLarge, err
+			}
 			log.Printf("Failed to get files from %s: %v", fname, err)
 			continue
 		}
@@ -217,6 +253,18 @@ func rawDirHandler(w http.ResponseWriter, r *http.Request, d *data, file *files.
 }
 
 func rawFileHandler(w http.ResponseWriter, r *http.Request, file *files.FileInfo) (int, error) {
+	// GHSA-8q5j-8wcr-8v2v: never open a non-regular file for download.
+	// rawHandler guards the authenticated path, but public shares reach this
+	// function directly, so the guard lives here. Both the lstat mode and a
+	// fresh stat of the target are checked so a symlink pointing at a FIFO is
+	// refused too. Refusals answer promptly with 403, not an empty 200.
+	if isNonRegularFile(file.Mode) {
+		return http.StatusForbidden, fmt.Errorf("refusing non-regular download: %q", file.Path)
+	}
+	if st, err := file.Fs.Stat(file.Path); err == nil && isNonRegularFile(st.Mode()) {
+		return http.StatusForbidden, fmt.Errorf("refusing non-regular download: %q", file.Path)
+	}
+
 	fd, err := file.Fs.Open(file.Path)
 	if err != nil {
 		return http.StatusInternalServerError, err
