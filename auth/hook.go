@@ -157,6 +157,20 @@ func (a *HookAuth) SaveUser() (*users.User, error) {
 		}
 		u = a.GetUser(d)
 
+		// Never inherit shell-equivalent rights from the defaults: Admin and
+		// Execute (and the command list) require an explicit hook statement,
+		// mirroring signup and proxy auto-provisioning. The hook script is
+		// admin-authored, so an explicit user.perm.admin/user.perm.execute
+		// output still grants them; silence must not silently escalate a
+		// provisioned account when the defaults are permissive.
+		if _, ok := a.Fields.Values["user.perm.admin"]; !ok {
+			u.Perm.Admin = false
+		}
+		if _, ok := a.Fields.Values["user.perm.execute"]; !ok {
+			u.Perm.Execute = false
+			u.Commands = []string{}
+		}
+
 		// A scope explicitly returned by the hook takes precedence over the
 		// automatic per-user home directory derivation.
 		_, explicitScope := a.Fields.Values["user.scope"]
