@@ -169,6 +169,9 @@ func (m *memoryUsersBackend) Update(user *User, _ ...string) error {
 func (m *memoryUsersBackend) DeleteByID(uint) error         { return nil }
 func (m *memoryUsersBackend) DeleteByUsername(string) error { return nil }
 func (m *memoryUsersBackend) CountAdmins() (int, error)     { return 0, nil }
+func (m *memoryUsersBackend) IncrementTokenVersion(uint) error {
+	return nil
+}
 
 func cloneUser(user *User) *User {
 	clone := *user

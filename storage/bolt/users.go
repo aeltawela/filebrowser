@@ -101,6 +101,30 @@ func (st usersBackend) Save(user *users.User) error {
 	return err
 }
 
+// IncrementTokenVersion advances the session epoch in a single write
+// transaction. Reading and writing the user outside a transaction would let
+// two concurrent revocations both write the same version and resurrect tokens.
+func (st usersBackend) IncrementTokenVersion(id uint) error {
+	tx, err := st.db.Begin(true)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	user := &users.User{}
+	if err := tx.One("ID", id, user); err != nil {
+		if errors.Is(err, storm.ErrNotFound) {
+			return fberrors.ErrNotExist
+		}
+		return err
+	}
+
+	if err := tx.UpdateField(user, "TokenVersion", user.TokenVersion+1); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (st usersBackend) DeleteByID(id uint) error {
 	return st.db.DeleteStruct(&users.User{ID: id})
 }
