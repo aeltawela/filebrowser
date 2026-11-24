@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/filebrowser/filebrowser/v2/settings"
@@ -347,5 +348,38 @@ func TestTUSCreateOnlyUserCanCompleteNewUpload(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(userScope, "new.bin")); err != nil || string(got) != "hello" {
 		t.Fatalf("uploaded content = %q, err = %v", got, err)
+	}
+}
+
+// A negative declared length must be rejected before the target is touched:
+// validating after OpenFile(O_TRUNC) would empty an existing file and then
+// fail the request.
+func TestTUSNegativeLengthDoesNotTruncate(t *testing.T) {
+	root := t.TempDir()
+	userScope := filepath.Join(root, "user")
+	if err := os.MkdirAll(userScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userScope, "keep.bin"), []byte("precious"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Create: true, Modify: true, Download: true}
+	st := scopedUserStorage(t, userScope, perm, key)
+	cache := newMemoryUploadCache()
+	t.Cleanup(cache.Close)
+
+	post := handle(tusPostHandler(cache), "/api/tus", st, &settings.Server{})
+	req, _ := http.NewRequest(http.MethodPost, "/keep.bin?override=true", strings.NewReader(""))
+	req.Header.Set("X-Auth", signToken(t, perm, key))
+	req.Header.Set("Upload-Length", "-1")
+	rec := httptest.NewRecorder()
+	post.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative length returned %d, body=%q; want 400", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(userScope, "keep.bin")); err != nil || string(got) != "precious" {
+		t.Fatalf("VULNERABLE: existing file was truncated before the rejection: %q, %v", got, err)
 	}
 }
