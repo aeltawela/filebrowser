@@ -93,7 +93,10 @@ func TestExpiredTokenNeedsProxyAssertion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to save settings: %v", err)
 	}
-	if err := st.Auth.Save(&fbAuth.ProxyAuth{Header: proxyHeader}); err != nil {
+	if err := st.Auth.Save(&fbAuth.ProxyAuth{
+		Header:         proxyHeader,
+		TrustedProxies: []string{"10.0.0.0/8"},
+	}); err != nil {
 		t.Fatalf("failed to save auther: %v", err)
 	}
 
@@ -117,6 +120,21 @@ func TestExpiredTokenNeedsProxyAssertion(t *testing.T) {
 	get := func(token, proxyUser string) *httptest.ResponseRecorder {
 		req, _ := http.NewRequest(http.MethodGet, "/", http.NoBody)
 		req.Header.Set("X-Auth", token)
+		// The request arrives through the trusted proxy.
+		req.RemoteAddr = "10.0.0.5:1234"
+		if proxyUser != "" {
+			req.Header.Set(proxyHeader, proxyUser)
+		}
+		rec := httptest.NewRecorder()
+		handle(protected, "", st, &settings.Server{}).ServeHTTP(rec, req)
+		return rec
+	}
+
+	untrusted := func(token, proxyUser string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.Header.Set("X-Auth", token)
+		// A direct client spoofing the header, bypassing the proxy.
+		req.RemoteAddr = "203.0.113.10:1234"
 		if proxyUser != "" {
 			req.Header.Set(proxyHeader, proxyUser)
 		}
@@ -140,6 +158,12 @@ func TestExpiredTokenNeedsProxyAssertion(t *testing.T) {
 	t.Run("expired token the proxy still asserts is accepted", func(t *testing.T) {
 		if rec := get(expiredToken, "u"); rec.Code != http.StatusOK {
 			t.Errorf("expired token asserted by the proxy = %d, body=%q; want 200", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("asserted header from an untrusted peer is rejected", func(t *testing.T) {
+		if rec := untrusted(expiredToken, "u"); rec.Code != http.StatusUnauthorized {
+			t.Errorf("VULNERABLE: expired token with a spoofed header = %d; want 401", rec.Code)
 		}
 	})
 

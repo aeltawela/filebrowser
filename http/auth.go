@@ -101,6 +101,13 @@ func proxyAsserts(r *http.Request, d *data, id uint) bool {
 		return false
 	}
 
+	// The expiry waiver below trusts the proxy's identity assertion, so it
+	// must apply the same trust anchor as login: a direct client spoofing the
+	// header must not be able to keep an expired token alive.
+	if !proxy.Trusted(r) {
+		return false
+	}
+
 	username := r.Header.Get(proxy.Header)
 	if username == "" {
 		return false
