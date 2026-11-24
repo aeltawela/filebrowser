@@ -212,6 +212,14 @@ var userPutHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request
 		return http.StatusBadRequest, nil
 	}
 
+	// TokenVersion is server-owned. Copy the stored value so a client cannot
+	// reset it by including the field in a full ("all") update payload.
+	stored, err := d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, req.Data.ID)
+	if err != nil {
+		return errToStatus(err), err
+	}
+	req.Data.TokenVersion = stored.TokenVersion
+
 	for _, field := range req.Which {
 		if strings.ToLower(field) == "perm" || strings.ToLower(field) == "all" {
 			if req.Data.Perm.Share && !req.Data.Perm.Download {
