@@ -1,6 +1,8 @@
 package fbhttp
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -42,6 +44,10 @@ type userInfo struct {
 
 type authToken struct {
 	User userInfo `json:"user"`
+	// Ver is the user's session epoch at the time the token was minted. A
+	// missing claim decodes to zero, which is only valid while the stored
+	// version is still zero (backwards compatibility for existing tokens).
+	Ver uint64 `json:"ver,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -143,7 +149,21 @@ func withUser(fn handleFunc) handleFunc {
 
 		d.user, err = d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, tk.User.ID)
 		if err != nil {
+			// A token for a deleted user is an authentication failure, not a
+			// server error: fail closed without tripping 5xx alerting or
+			// leaking more than user (non-)existence already implies.
+			if errors.Is(err, fberrors.ErrNotExist) {
+				return http.StatusUnauthorized, nil
+			}
 			return http.StatusInternalServerError, err
+		}
+
+		// Revocation check on every authenticated request: logout, password
+		// changes, permission changes and account locking advance the stored
+		// epoch, so any token minted before that point stops working at once.
+		// This also runs for renewal and for the proxy-expiration exception.
+		if d.user.TokenVersion != tk.Ver {
+			return http.StatusUnauthorized, nil
 		}
 
 		canonicalizeRequestPath(r)
@@ -258,6 +278,17 @@ var signupHandler = func(w http.ResponseWriter, r *http.Request, d *data) (int, 
 	return http.StatusOK, nil
 }
 
+// logoutHandler revokes every token previously issued to the current user by
+// advancing the persisted session epoch. The client must still discard its
+// local token; this handler makes replay of that token impossible.
+var logoutHandler = withUser(func(w http.ResponseWriter, _ *http.Request, d *data) (int, error) {
+	if err := d.store.Users.IncrementTokenVersion(d.user.ID); err != nil {
+		return http.StatusInternalServerError, err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return 0, nil
+})
+
 func renewHandler(tokenExpireTime time.Duration) handleFunc {
 	return withUser(func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
 		w.Header().Set("X-Renew-Token", "false")
@@ -266,6 +297,14 @@ func renewHandler(tokenExpireTime time.Duration) handleFunc {
 }
 
 func printToken(w http.ResponseWriter, _ *http.Request, d *data, user *users.User, tokenExpirationTime time.Duration) (int, error) {
+	// Every minted token carries a unique ID: without one, two logins in the
+	// same second produce byte-identical tokens (same claims, second-precision
+	// timestamps), and concurrent sessions would unknowingly share a single
+	// token string.
+	var idBytes [16]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return http.StatusInternalServerError, err
+	}
 	claims := &authToken{
 		User: userInfo{
 			ID:                    user.ID,
@@ -282,7 +321,9 @@ func printToken(w http.ResponseWriter, _ *http.Request, d *data, user *users.Use
 			AceEditorTheme:        user.AceEditorTheme,
 			Bookmarks:             user.Bookmarks,
 		},
+		Ver: user.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        base64.RawURLEncoding.EncodeToString(idBytes[:]),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenExpirationTime)),
 			Issuer:    "File Browser",
