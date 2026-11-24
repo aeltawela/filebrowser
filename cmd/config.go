@@ -216,7 +216,7 @@ func getHookAuth(flags *pflag.FlagSet, defaultAuther map[string]interface{}) (au
 		return nil, err
 	}
 	if command == "" {
-		command = defaultAuther["command"].(string)
+		command, _ = defaultAuther["command"].(string)
 	}
 
 	if command == "" {
