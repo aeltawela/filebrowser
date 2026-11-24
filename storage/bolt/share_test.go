@@ -96,7 +96,7 @@ func TestDeleteWithPathPrefixTrailingSlash(t *testing.T) {
 		{Hash: "u1-a", Path: "/a", UserID: 1},
 		{Hash: "u1-a-child", Path: "/a/child.txt", UserID: 1},
 		{Hash: "u1-abc", Path: "/abc", UserID: 1}, // sibling sharing a byte prefix
-		{Hash: "u2-a", Path: "/a", UserID: 2},      // other user, must remain
+		{Hash: "u2-a", Path: "/a", UserID: 2},     // other user, must remain
 	}
 	for _, l := range links {
 		if err := s.Save(l); err != nil {
@@ -131,5 +131,36 @@ func TestDeleteWithPathPrefixNoMatch(t *testing.T) {
 	// must be treated as a no-op rather than surfaced as an error.
 	if err := s.DeleteWithPathPrefix("/a", 1); err != nil {
 		t.Fatalf("DeleteWithPathPrefix on empty store returned error: %v", err)
+	}
+}
+
+// Filesystem events must remove every link at or below the removed path, not
+// only the links owned by the user who performed the delete. The owner filter is
+// reserved for the share-management API (GHSA-r6pg-pg54-rcr5).
+func TestDeleteByPathPrefixIgnoresOwner(t *testing.T) {
+	t.Parallel()
+
+	s := newTestShareBackend(t)
+
+	links := []*share.Link{
+		{Hash: "u1-a", Path: "/a", UserID: 1},
+		{Hash: "u2-a", Path: "/a", UserID: 2},
+		{Hash: "u3-child", Path: "/a/child.txt", UserID: 3},
+		{Hash: "u1-abc", Path: "/abc", UserID: 1},
+	}
+	for _, l := range links {
+		if err := s.Save(l); err != nil {
+			t.Fatalf("failed to save link %s: %v", l.Hash, err)
+		}
+	}
+
+	if err := s.DeleteByPathPrefix("/a/"); err != nil {
+		t.Fatalf("DeleteByPathPrefix returned error: %v", err)
+	}
+
+	remaining := remainingHashes(t, s)
+	want := []string{"u1-abc"}
+	if len(remaining) != len(want) || remaining[0] != want[0] {
+		t.Fatalf("remaining shares = %v, want %v", remaining, want)
 	}
 }
