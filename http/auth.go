@@ -189,6 +189,13 @@ func loginHandler(tokenExpireTime time.Duration) handleFunc {
 			r.Body = http.MaxBytesReader(w, r.Body, maxAuthBodySize)
 		}
 
+		// Blunt credential stuffing: after repeated failures from this peer,
+		// stop trying credentials until the window lapses.
+		ip := clientIP(r)
+		if loginAttempts.blocked(ip) {
+			return http.StatusTooManyRequests, nil
+		}
+
 		auther, err := d.store.Auth.Get(d.settings.AuthMethod)
 		if err != nil {
 			return http.StatusInternalServerError, err
@@ -197,6 +204,7 @@ func loginHandler(tokenExpireTime time.Duration) handleFunc {
 		user, err := auther.Auth(r, d.store.Users, d.settings, d.server)
 		switch {
 		case errors.Is(err, os.ErrPermission), errors.Is(err, settings.ErrRootScope):
+			loginAttempts.record(ip)
 			return http.StatusForbidden, nil
 		case err != nil:
 			return http.StatusInternalServerError, err
