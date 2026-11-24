@@ -77,7 +77,21 @@ func (s shareBackend) Delete(hash string) error {
 	return err
 }
 
+// DeleteWithPathPrefix removes the links owned by userID at or below pathPrefix.
+// The owner filter keeps the share-management API from touching another user's
+// links; filesystem events use DeleteByPathPrefix instead.
 func (s shareBackend) DeleteWithPathPrefix(pathPrefix string, userID uint) error {
+	return s.deleteByPathPrefix(pathPrefix, &userID)
+}
+
+// DeleteByPathPrefix removes every link at or below pathPrefix, regardless of
+// owner. Callers must only use it after the filesystem path itself was deleted
+// or moved, where every link pointing at it is invalid.
+func (s shareBackend) DeleteByPathPrefix(pathPrefix string) error {
+	return s.deleteByPathPrefix(pathPrefix, nil)
+}
+
+func (s shareBackend) deleteByPathPrefix(pathPrefix string, userID *uint) error {
 	// Share paths are stored without a trailing slash
 	prefix := strings.TrimRight(pathPrefix, "/")
 
@@ -91,7 +105,7 @@ func (s shareBackend) DeleteWithPathPrefix(pathPrefix string, userID uint) error
 
 	var err error
 	for _, link := range links {
-		if link.UserID != userID {
+		if userID != nil && link.UserID != *userID {
 			continue
 		}
 
