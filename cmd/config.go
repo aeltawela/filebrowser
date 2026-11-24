@@ -45,6 +45,10 @@ func addConfigFlags(flags *pflag.FlagSet) {
 
 	flags.String("auth.method", string(auth.MethodJSONAuth), "authentication type")
 	flags.String("auth.header", "", "HTTP header for auth.method=proxy")
+	flags.StringSlice("auth.proxy.trustedProxies", nil, "CIDRs allowed to assert auth.header (auth.method=proxy)")
+	flags.String("auth.proxy.secret", "", "shared secret required in X-Proxy-Secret (auth.method=proxy)")
+	flags.Bool("auth.proxy.createUser", false, "allow trusted proxies to provision unknown users")
+	flags.Bool("auth.proxy.allowUntrusted", false, "unsafe: allow proxy auth with no trusted proxy or secret (has no effect while trustedProxies or secret are configured)")
 	flags.String("auth.command", "", "command for auth.method=hook")
 	flags.String("auth.logoutPage", "", "url of custom logout page")
 
@@ -101,14 +105,66 @@ func getProxyAuth(flags *pflag.FlagSet, defaultAuther map[string]interface{}) (a
 	}
 
 	if header == "" && defaultAuther != nil {
-		header = defaultAuther["header"].(string)
+		header, _ = defaultAuther["header"].(string)
 	}
 
 	if header == "" {
 		return nil, errors.New("you must set the flag 'auth.header' for method 'proxy'")
 	}
 
-	return &auth.ProxyAuth{Header: header}, nil
+	trusted, err := flags.GetStringSlice("auth.proxy.trustedProxies")
+	if err != nil {
+		return nil, err
+	}
+	// Only fall back to the stored value when the flag was not passed: an
+	// explicitly emptied list clears the CIDRs. Without the Changed gate, an
+	// operator could never remove a trusted proxy via `config set`.
+	if !flags.Changed("auth.proxy.trustedProxies") && len(trusted) == 0 && defaultAuther != nil {
+		if raw, ok := defaultAuther["trustedProxies"].([]interface{}); ok {
+			for _, value := range raw {
+				if s, ok := value.(string); ok {
+					trusted = append(trusted, s)
+				}
+			}
+		}
+	}
+
+	secret, err := flags.GetString("auth.proxy.secret")
+	if err != nil {
+		return nil, err
+	}
+	// Same gate: an explicitly emptied secret revokes it instead of silently
+	// keeping the stored (possibly leaked) one.
+	if !flags.Changed("auth.proxy.secret") && secret == "" && defaultAuther != nil {
+		secret, _ = defaultAuther["secret"].(string)
+	}
+
+	createUser, err := flags.GetBool("auth.proxy.createUser")
+	if err != nil {
+		return nil, err
+	}
+	// Same gate: `--auth.proxy.createUser=false` must actually disable
+	// auto-provisioning instead of being mistaken for "flag not passed".
+	if !flags.Changed("auth.proxy.createUser") && !createUser && defaultAuther != nil {
+		createUser, _ = defaultAuther["createUser"].(bool)
+	}
+
+	allowUntrusted, err := flags.GetBool("auth.proxy.allowUntrusted")
+	if err != nil {
+		return nil, err
+	}
+	// Same gate: the unsafe override must be removable via `config set`.
+	if !flags.Changed("auth.proxy.allowUntrusted") && !allowUntrusted && defaultAuther != nil {
+		allowUntrusted, _ = defaultAuther["allowUntrusted"].(bool)
+	}
+
+	return &auth.ProxyAuth{
+		Header:         header,
+		TrustedProxies: trusted,
+		Secret:         secret,
+		CreateUser:     createUser,
+		AllowUntrusted: allowUntrusted,
+	}, nil
 }
 
 func getNoAuth() auth.Auther {
@@ -133,14 +189,14 @@ func getJSONAuth(flags *pflag.FlagSet, defaultAuther map[string]interface{}) (au
 	}
 
 	if key == "" {
-		if kmap, ok := defaultAuther["recaptcha"].(map[string]interface{}); ok {
-			key = kmap["key"].(string)
+		if kmap, ok := defaultAuther["recaptcha"].(map[string]interface{}); ok && !flags.Changed("recaptcha.key") {
+			key, _ = kmap["key"].(string)
 		}
 	}
 
 	if secret == "" {
-		if smap, ok := defaultAuther["recaptcha"].(map[string]interface{}); ok {
-			secret = smap["secret"].(string)
+		if smap, ok := defaultAuther["recaptcha"].(map[string]interface{}); ok && !flags.Changed("recaptcha.secret") {
+			secret, _ = smap["secret"].(string)
 		}
 	}
 
@@ -268,12 +324,40 @@ func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Aut
 
 	w.Flush()
 
-	b, err := json.MarshalIndent(auther, "", "  ")
+	b, err := json.Marshal(auther)
+	if err != nil {
+		return err
+	}
+	// Redact shared secrets before display: `config cat` output ends up in
+	// docs, tickets and screen shares, and must never leak the value a proxy
+	// (or reCAPTCHA) must echo back (GHSA-xqp3-jq6g-x3qm trusts the secret).
+	var shown map[string]interface{}
+	if err := json.Unmarshal(b, &shown); err != nil {
+		return err
+	}
+	redactSecrets(shown)
+	b, err = json.MarshalIndent(shown, "", "  ")
 	if err != nil {
 		return err
 	}
 	fmt.Printf("\nAuther configuration (raw):\n\n%s\n\n", string(b))
 	return nil
+}
+
+// redactSecrets replaces secret values with a placeholder, recursing into
+// nested objects (reCAPTCHA settings nest under their own key).
+func redactSecrets(m map[string]interface{}) {
+	for k, v := range m {
+		if strings.EqualFold(k, "secret") {
+			if s, ok := v.(string); ok && s != "" {
+				m[k] = "***REDACTED***"
+			}
+			continue
+		}
+		if nested, ok := v.(map[string]interface{}); ok {
+			redactSecrets(nested)
+		}
+	}
 }
 
 func getSettings(flags *pflag.FlagSet, set *settings.Settings, ser *settings.Server, auther auth.Auther, all bool) (auth.Auther, error) {
