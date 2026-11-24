@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -109,6 +110,14 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			fileFlags |= os.O_TRUNC
 		}
 
+		// Validate the declared length before touching the filesystem: a
+		// negative (or otherwise invalid) length must not truncate the target
+		// first.
+		uploadLength, err := getUploadLength(r)
+		if err != nil {
+			return http.StatusBadRequest, err
+		}
+
 		openFile, err := d.user.Fs.OpenFile(r.URL.Path, fileFlags, d.settings.FileMode)
 		if err != nil {
 			return errToStatus(err), err
@@ -126,11 +135,6 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		})
 		if err != nil {
 			return errToStatus(err), err
-		}
-
-		uploadLength, err := getUploadLength(r)
-		if err != nil || uploadLength < 0 {
-			return http.StatusBadRequest, fmt.Errorf("invalid upload length: %w", err)
 		}
 
 		// Enables the user to utilize the PATCH endpoint for uploading file data.
@@ -205,7 +209,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 
 	uploadOffset, err := getUploadOffset(r)
 	if err != nil {
-		return http.StatusBadRequest, fmt.Errorf("invalid upload offset")
+		return http.StatusBadRequest, err
 	}
 
 	// GHSA-4r8p-gqj2-mwgm: serialize PATCHes for one upload. Without this,
@@ -279,7 +283,14 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	// PATCH could stream arbitrary data to disk regardless of the length the
 	// client declared when the upload was created.
 	remaining := uploadLength - uploadOffset
-	bytesWritten, err := io.Copy(openFile, io.LimitReader(r.Body, remaining+1))
+	// Read one byte past the remainder so an overlong body is detected
+	// instead of silently truncated. Guard the extreme length: at
+	// math.MaxInt64 the +1 would overflow to a negative limit.
+	readLimit := remaining
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	bytesWritten, err := io.Copy(openFile, io.LimitReader(r.Body, readLimit))
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("could not write to file: %w", err)
 	}
@@ -349,17 +360,25 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 }
 
 func getUploadLength(r *http.Request) (int64, error) {
-	uploadOffset, err := strconv.ParseInt(r.Header.Get("Upload-Length"), 10, 64)
+	uploadLength, err := strconv.ParseInt(r.Header.Get("Upload-Length"), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid upload length: %w", err)
 	}
-	return uploadOffset, nil
+	// GHSA-ffx7-75gc-jg7c: a negative length would make the first PATCH
+	// satisfy newOffset >= uploadLength with zero bytes and fire the hook.
+	if uploadLength < 0 {
+		return 0, fmt.Errorf("invalid upload length %d", uploadLength)
+	}
+	return uploadLength, nil
 }
 
 func getUploadOffset(r *http.Request) (int64, error) {
 	uploadOffset, err := strconv.ParseInt(r.Header.Get("Upload-Offset"), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid upload offset: %w", err)
+	}
+	if uploadOffset < 0 {
+		return 0, fmt.Errorf("invalid upload offset %d", uploadOffset)
 	}
 	return uploadOffset, nil
 }
