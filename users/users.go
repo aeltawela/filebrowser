@@ -51,6 +51,12 @@ type User struct {
 	DateFormat            bool          `json:"dateFormat"`
 	AceEditorTheme        string        `json:"aceEditorTheme"`
 	Bookmarks             []Bookmark    `json:"bookmarks"`
+
+	// TokenVersion is a persisted, monotonically increasing session epoch.
+	// Tokens carry the version they were minted at and are rejected when it no
+	// longer matches the stored value. The zero default keeps existing users
+	// and their tokens valid until the first revocation.
+	TokenVersion uint64 `json:"tokenVersion,omitempty"`
 }
 
 // GetRules implements rules.Provider.
