@@ -424,19 +424,33 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 		log.Println("WARNING: you fully understand and trust the contents of every user scope.")
 	}
 
-	if set, err := st.Settings.Get(); err == nil && set.Signup {
-		scope := strings.TrimSpace(set.Defaults.Scope)
-		scopeIsRoot := scope == "" || scope == "." || scope == "/"
-
-		if !set.CreateUserDir && scopeIsRoot {
-			log.Println("WARNING: Signup is enabled without createUserDir and the default scope is")
-			log.Println("WARNING: the server root, so every self-registered user can read, modify and")
-			log.Println("WARNING: delete all files File Browser serves, including other users' files.")
-			log.Println("WARNING: Enable createUserDir, or set a default scope other than the root.")
-		}
+	// GHSA-6759-996p-gpj6: signup that cannot derive a per-user scope would
+	// hand every self-registered user the server root. The signup handler
+	// refuses such registrations; refuse to start as well so the
+	// misconfiguration is surfaced at deploy time instead of per request.
+	if err := validateSignupConfig(st); err != nil {
+		return nil, err
 	}
 
 	return server, nil
+}
+
+// validateSignupConfig is a startup gate: an instance with signup enabled must
+// be able to provision a non-root scope, either by deriving a per-user home
+// (createUserDir) or through an explicitly configured non-root default scope.
+func validateSignupConfig(st *storage.Storage) error {
+	set, err := st.Settings.Get()
+	if err != nil {
+		return err
+	}
+	if !set.Signup || set.CreateUserDir {
+		return nil
+	}
+	scope := strings.TrimSpace(set.Defaults.Scope)
+	if scope == "" || scope == "." || scope == "/" {
+		return fmt.Errorf("refusing to start: signup is enabled but no per-user scope can be derived; enable createUserDir or set a default scope other than the root (%w)", settings.ErrRootScope)
+	}
+	return nil
 }
 
 func setupLog(logMethod string) {
@@ -475,7 +489,7 @@ func quickSetup(v *viper.Viper, s *storage.Storage) error {
 			AceEditorTheme:        v.GetString("defaults.aceEditorTheme"),
 			Perm: users.Permissions{
 				Admin:    false,
-				Execute:  true,
+				Execute:  false,
 				Create:   true,
 				Rename:   true,
 				Modify:   true,
