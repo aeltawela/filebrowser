@@ -93,6 +93,7 @@ func init() {
 	flags.String("cacheDir", "", "file cache directory (disabled if empty)")
 	flags.String("redisCacheUrl", "", "redis cache URL (for multi-instance deployments), e.g. redis://user:pass@host:port")
 	flags.Int("imageProcessors", 4, "image processors count")
+	flags.Bool("enableUnsafeExec", false, "acknowledge that command execution is equivalent to shell access and allow enabling it")
 	addServerFlags(flags)
 }
 
@@ -315,6 +316,22 @@ func warnIfVideoThumbnailsUnavailable(server *settings.Server, videoThumbService
 	}
 }
 
+// validateUnsafeExec refuses to enable the command runner unless the operator
+// has explicitly acknowledged that it grants shell-equivalent access. The
+// feature is disabled by default and the allowlist is not a security boundary:
+// a permitted program can execute other programs.
+func validateUnsafeExec(v *viper.Viper, server *settings.Server) error {
+	if server == nil || !server.EnableExec {
+		return nil
+	}
+
+	if !v.GetBool("enableUnsafeExec") {
+		return errors.New("command execution is disabled for safety: pass --enableUnsafeExec to acknowledge that allowed commands run with the server's privileges and can execute other programs")
+	}
+
+	return nil
+}
+
 // validateProxyAuthConfig is a startup gate: proxy authentication is only
 // safe when the identity header is anchored to a trusted source address or a
 // shared secret. The explicit allowUntrusted flag is the sole escape hatch.
@@ -429,6 +446,10 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 		server.EnableExec = !v.GetBool("disableExec")
 	}
 
+	if err := validateUnsafeExec(v, server); err != nil {
+		return nil, err
+	}
+
 	if v.IsSet("followExternalSymlinks") {
 		server.FollowExternalSymlinks = v.GetBool("followExternalSymlinks")
 	}
@@ -447,6 +468,10 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 		log.Println("WARNING: This feature has known security vulnerabilities and should not")
 		log.Println("WARNING: you fully understand the risks involved. For more information")
 		log.Println("WARNING: read https://github.com/filebrowser/filebrowser/issues/5199")
+		if set, err := st.Settings.Get(); err == nil && len(set.Shell) > 0 {
+			log.Println("WARNING: A shell is configured, but it is ignored: commands and hooks")
+			log.Println("WARNING: always run the parsed argv directly, never through a shell.")
+		}
 	}
 
 	if server.FollowExternalSymlinks {
