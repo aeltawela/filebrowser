@@ -61,6 +61,7 @@ filebrowser [flags]
       --disablePreviewResize           disable resize of image previews
       --disableThumbnails              disable thumbnails
       --disableTypeDetectionByHeader   disables type detection by reading file headers
+      --enableUnsafeExec               acknowledge that command execution is equivalent to shell access and allow enabling it
       --followExternalSymlinks         follow symlinks whose target is outside the user scope (unsafe)
   -h, --help                           help for filebrowser
       --imageProcessors int            image processors count (default 4)
