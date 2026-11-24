@@ -81,6 +81,7 @@ var withHashFile = func(fn handleFunc) handleFunc {
 		// rule checker are relative to it. Resolve them back to the user's
 		// original scope so deny rules below the share root keep applying.
 		d.checkerPrefix = basePath
+		files.SetRuleChecker(d.user.Fs, d)
 
 		file, err = files.NewFileInfo(&files.FileOptions{
 			Fs:      d.user.Fs,
