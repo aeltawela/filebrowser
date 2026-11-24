@@ -16,6 +16,7 @@ import (
 
 	fbAuth "github.com/filebrowser/filebrowser/v2/auth"
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/settings"
 	"github.com/filebrowser/filebrowser/v2/users"
 )
@@ -157,6 +158,7 @@ func withUser(fn handleFunc) handleFunc {
 			}
 			return http.StatusInternalServerError, err
 		}
+		files.SetRuleChecker(d.user.Fs, d)
 
 		// Revocation check on every authenticated request: logout, password
 		// changes, permission changes and account locking advance the stored
