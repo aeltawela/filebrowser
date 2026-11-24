@@ -31,14 +31,78 @@ Where `https://recaptcha.net` is any provider you want.
 If you have a reverse proxy you want to use to login your users, you do it via our `proxy` authentication method. To configure this method, your proxy must send an HTTP header containing the username of the logged in user:
 
 ```sh
-filebrowser config set --auth.method=proxy --auth.header=X-My-Header
+filebrowser config set --auth.method=proxy --auth.header=X-My-Header \
+  --auth.proxy.trustedProxies=127.0.0.1/32
 ```
 
 Where `X-My-Header` is the HTTP header provided by your proxy with the username.
 
-> [!WARNING]
-> 
-> File Browser will blindly trust the provided header. If the proxy can be bypassed, an attacker could simply attach the header and get admin access. Please ensure that File Browser is not accessible from untrusted networks, and that the proxy is correctly configured to strip/overwrite the header from client requests.
+> [!IMPORTANT]
+>
+> The header is an identity assertion, and File Browser only trusts it when
+> the request comes from a configured trusted source. **The server refuses to
+> start** with `auth.method=proxy` unless at least one trust anchor is
+> configured. `X-Forwarded-For` and similar headers are client-controlled and
+> are never used as a trust anchor; the source address (`RemoteAddr`) is.
+
+Trust anchors:
+
+- `--auth.proxy.trustedProxies` — a comma-separated list of CIDRs whose source
+  address may assert a username, for example `127.0.0.1/32,::1/128` when the
+  proxy runs on the same host. Use the address File Browser actually sees: if
+  the proxy connects from another container or host, list that network.
+- `--auth.proxy.secret` — a shared secret the proxy must echo in the
+  `X-Proxy-Secret` header. When both a CIDR list and a secret are configured,
+  both must match.
+
+Additional controls:
+
+- `--auth.proxy.createUser` — allows a trusted proxy to provision previously
+  unknown users. Off by default: an identity assertion must not silently
+  create accounts. Provisioned users get a derived per-user scope
+  (`createUserDir`) or an explicitly configured non-root scope; provisioning
+  the server root is refused.
+- `--auth.proxy.allowUntrusted` — explicit acknowledgement that the instance
+  is only reachable from trusted clients (for example, bound to loopback).
+  This is the only way to run proxy auth without a trust anchor, and it
+  disables the protection entirely. Prefer a trusted CIDR.
+
+Your proxy must still strip or overwrite the identity header (and
+`X-Proxy-Secret`, if used) from client requests.
+
+## Sessions and revocation
+
+Sessions are JWTs carrying a session epoch (`ver`) that matches a persisted
+per-user `TokenVersion`. Every authenticated request re-checks the epoch, so
+the following take effect immediately for **all** previously issued tokens:
+
+- logout (`POST /api/logout`, called by the web UI before clearing local state);
+- password changes and admin password resets;
+
+Changing your own password (or an admin resetting it) ends **all** of that
+user's sessions, including the session used to make the change: the next
+request with the old token returns `401` and the UI returns to the login page.
+This is deliberate — a password change must not leave other sessions alive.
+- permission, scope, and lock-password changes;
+- any update through the CLI or API that touches those fields.
+
+Existing tokens issued before this fork keep working until the first
+revocation (their epoch is zero). Renewal cannot resurrect a revoked session.
+Tokens are still self-contained: keep `tokenExpirationTime` short, and treat a
+leaked token as valid until it expires or is revoked.
+
+## Self-registration permissions
+
+Self-registered users get **download only** by default. The configured user
+defaults (which include the destructive permissions) are never inherited by
+signup. An administrator can opt in to additional rights with the
+`signupPermissions` settings block (set through `filebrowser config import`
+or the settings API; there is no dedicated CLI flag); `admin` and `execute`
+are always withheld and must be granted through a separate admin action.
+
+Signup also requires a derivable scope: enable `createUserDir` for per-user
+homes, or configure a non-root default scope. With neither, the server refuses
+to start and the signup endpoint returns `403`.
 
 ## Hook Authentication
 
@@ -157,6 +221,11 @@ user.hideDotfiles=false
 ```
 user.scope=/
 ```
+
+A scope returned by the hook is trusted as administrator intent: the hook is
+your own script, so an explicit scope — including the root — is accepted, and
+several users may share it. (Self-signup and proxy auto-provisioning never
+pass an explicit scope, so they can never provision the server root.)
 
 ## No Authentication
 
