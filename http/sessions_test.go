@@ -540,3 +540,48 @@ func TestRuleChangeRevokesToken(t *testing.T) {
 		t.Errorf("VULNERABLE: token survives an access-rule change: %d", rec.Code)
 	}
 }
+
+// GHSA-v7vv-5wj2-gfcj: security-sensitive user updates must revoke all tokens
+// previously issued to that user, including admin-initiated password resets.
+func TestPasswordResetRevokesToken(t *testing.T) {
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true}
+	st, server := newSessionStore(t, perm, key)
+	protected := protectedSessionHandler(st, server)
+	token := signToken(t, perm, key)
+
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("token should be valid before reset, got %d", rec.Code)
+	}
+
+	put := handle(userPutHandler, "", st, server)
+	reset := `{"what":"user","which":["password"],"data":{"id":1,"password":"NewStrongPass123!"}}`
+	rec := httptest.NewRecorder()
+	put.ServeHTTP(rec, putUserRequest(token, reset))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("password reset returned %d, body=%q; want 200", rec.Code, rec.Body.String())
+	}
+
+	if rec := sessionRequest(protected, http.MethodGet, "/", token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("VULNERABLE: token issued before password reset still authenticates: %d", rec.Code)
+	}
+
+	// Permission, lock, and scope changes must revoke as well.
+	for name, field := range map[string]string{"perm": "perm", "lock": "lockPassword", "scope": "scope"} {
+		t.Run(name, func(t *testing.T) {
+			perm := users.Permissions{Admin: true, Download: true}
+			st, server := newSessionStore(t, perm, key)
+			protected := protectedSessionHandler(st, server)
+			tok := signToken(t, perm, key)
+			body := `{"what":"user","which":["` + field + `"],"data":{"id":1,"lockPassword":true,"perm":{"download":true},"scope":"/"}}`
+			rec := httptest.NewRecorder()
+			handle(userPutHandler, "", st, server).ServeHTTP(rec, putUserRequest(tok, body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s update returned %d, body=%q", name, rec.Code, rec.Body.String())
+			}
+			if rec := sessionRequest(protected, http.MethodGet, "/", tok, ""); rec.Code != http.StatusUnauthorized {
+				t.Errorf("VULNERABLE: token survives %s change: %d", name, rec.Code)
+			}
+		})
+	}
+}
