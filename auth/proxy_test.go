@@ -58,8 +58,10 @@ func TestProxyAuthCreateUserRestrictsDefaults(t *testing.T) {
 	srv := &settings.Server{Root: t.TempDir()}
 
 	s := &settings.Settings{
-		Key:        []byte("key"),
-		AuthMethod: MethodProxyAuth,
+		Key:              []byte("key"),
+		AuthMethod:       MethodProxyAuth,
+		CreateUserDir:    true,
+		UserHomeBasePath: "/users",
 		Defaults: settings.UserDefaults{
 			Perm: users.Permissions{
 				Admin:    true,
