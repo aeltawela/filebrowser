@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	libErrors "github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/filebrowser/filebrowser/v2/files"
 	imgErrors "github.com/filebrowser/filebrowser/v2/img"
 )
 
@@ -91,6 +92,10 @@ func errToStatus(err error) int {
 	case errors.Is(err, libErrors.ErrRootUserDeletion):
 		return http.StatusForbidden
 	case errors.Is(err, imgErrors.ErrImageTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, files.ErrTextTooLarge):
+		// A file that grew past the text cap between stat and read fails
+		// closed like the explicit size gate in resourceGetHandler.
 		return http.StatusRequestEntityTooLarge
 	default:
 		return http.StatusInternalServerError

@@ -51,15 +51,25 @@ var resourceGetHandler = withUser(func(w http.ResponseWriter, r *http.Request, d
 			return renderJSON(w, r, file)
 		}
 
+		// GHSA-7xqm-7738-642x: the text gate uses the stat size, but the
+		// file can grow before the read. Bound the read as well and refuse
+		// oversized content instead of buffering it.
+		if file.Size > files.MaxTextContentBytes {
+			return http.StatusRequestEntityTooLarge, nil
+		}
+
 		f, err := d.user.Fs.Open(r.URL.Path)
 		if err != nil {
 			return errToStatus(err), err
 		}
 		defer f.Close()
 
-		data, err := io.ReadAll(f)
+		data, err := io.ReadAll(io.LimitReader(f, files.MaxTextContentBytes+1))
 		if err != nil {
 			return http.StatusInternalServerError, err
+		}
+		if len(data) > files.MaxTextContentBytes {
+			return http.StatusRequestEntityTooLarge, nil
 		}
 
 		w.Header().Set("Content-Type", "application/octet-stream")
