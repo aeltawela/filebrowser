@@ -328,3 +328,17 @@ func TestRecaptchaMalformedBlockReturnsEmpty(t *testing.T) {
 		t.Error("malformed reCAPTCHA block should yield no reCAPTCHA config, not a panic")
 	}
 }
+
+// A malformed stored auther must produce a configuration error, not a panic:
+// an unchecked type assertion on admin-controlled database content turns a
+// corrupt record into a crash.
+func TestHookAuthMissingCommandReturnsError(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	addConfigFlags(flags)
+	if err := flags.Parse([]string{"--auth.method=hook"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getHookAuth(flags, map[string]interface{}{}); err == nil {
+		t.Fatal("expected an error for a stored hook auther without a command")
+	}
+}
