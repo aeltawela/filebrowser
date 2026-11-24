@@ -2,6 +2,7 @@ package fbhttp
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"regexp"
@@ -44,22 +45,37 @@ func subtitleFileHandler(w http.ResponseWriter, r *http.Request, file *files.Fil
 		return http.StatusBadRequest, nil
 	}
 
+	// GHSA-448h-jr2h-3vhp: refuse oversized inputs before opening them. The
+	// stat size is checked first so a large file is rejected without any read;
+	// the bounded read below is defense in depth against a size that changed
+	// after stat.
+	if file.Size > SubtitleMaxBytes {
+		return http.StatusRequestEntityTooLarge, errSubtitleTooLarge
+	}
+
 	fd, err := file.Fs.Open(file.Path)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	defer fd.Close()
 
+	// Bound the bytes handed to the parser: at most limit+1 is read, and any
+	// excess is rejected instead of being parsed. In particular the SSA/ASS
+	// branch no longer passes the raw descriptor to an unbounded parser.
+	content, readErr := io.ReadAll(io.LimitReader(fd, SubtitleMaxBytes+1))
+	if readErr != nil {
+		return http.StatusInternalServerError, readErr
+	}
+	if int64(len(content)) > SubtitleMaxBytes {
+		return http.StatusRequestEntityTooLarge, errSubtitleTooLarge
+	}
+
 	// load subtitle for conversion to vtt
 	var sub *astisub.Subtitles
 	if strings.HasSuffix(file.Name, ".srt") {
-		content, readErr := io.ReadAll(fd)
-		if readErr != nil {
-			return http.StatusInternalServerError, readErr
-		}
 		sub, err = astisub.ReadFromSRT(bytes.NewReader(normalizeSRTLineBreaks(content)))
 	} else if strings.HasSuffix(file.Name, ".ass") || strings.HasSuffix(file.Name, ".ssa") {
-		sub, err = astisub.ReadFromSSA(fd)
+		sub, err = astisub.ReadFromSSA(bytes.NewReader(content))
 	}
 	if err != nil {
 		return http.StatusInternalServerError, err
@@ -77,9 +93,13 @@ func subtitleFileHandler(w http.ResponseWriter, r *http.Request, file *files.Fil
 		return 0, nil
 	}
 
-	// convert others to vtt and serve from buffer
+	// convert others to vtt and serve from buffer, capping the rendered
+	// output so a hostile input cannot expand without bound.
 	var buf = &bytes.Buffer{}
-	err = sub.WriteToWebVTT(buf)
+	err = sub.WriteToWebVTT(&cappedWriter{w: buf, limit: SubtitleMaxOutputBytes})
+	if errors.Is(err, errSubtitleOutputTooLarge) {
+		return http.StatusRequestEntityTooLarge, err
+	}
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -89,4 +109,22 @@ func subtitleFileHandler(w http.ResponseWriter, r *http.Request, file *files.Fil
 
 func normalizeSRTLineBreaks(content []byte) []byte {
 	return srtLineBreakTag.ReplaceAll(content, []byte("\n"))
+}
+
+// cappedWriter fails writes once more than limit bytes have been accepted, so
+// a conversion whose output expands without bound is rejected with 413
+// instead of filling memory.
+type cappedWriter struct {
+	w     io.Writer
+	wrote int64
+	limit int64
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if c.wrote+int64(len(p)) > c.limit {
+		return 0, errSubtitleOutputTooLarge
+	}
+	n, err := c.w.Write(p)
+	c.wrote += int64(n)
+	return n, err
 }
