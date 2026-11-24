@@ -476,3 +476,29 @@ func TestReadListingCalculatesImageResolutionOnce(t *testing.T) {
 		t.Fatalf("expected one image open for resolution calculation, got %d", got)
 	}
 }
+
+// ResolveVirtual must keep the tail below the nearest existing ancestor: a
+// rule decision on /allowed/newdir/file (where newdir does not exist yet) has
+// to see the full path, not the collapsed ancestor (/), or an allow rule for
+// /allowed under a global deny / would wrongly refuse the upload.
+func TestResolveVirtualKeepsNonexistentTail(t *testing.T) {
+	scope := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(scope, "allowed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, fs := range map[string]afero.Fs{
+		"scoped": NewScopedFs(afero.NewOsFs(), scope),
+		"base":   afero.NewBasePathFs(afero.NewOsFs(), scope),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok, err := ResolveVirtual(fs, "/allowed/newdir/file")
+			if err != nil || !ok {
+				t.Fatalf("ResolveVirtual failed: %v %v", ok, err)
+			}
+			if got != "/allowed/newdir/file" {
+				t.Fatalf("VULNERABLE to false-deny: resolved to %q, want the full tail", got)
+			}
+		})
+	}
+}
