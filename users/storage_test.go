@@ -8,6 +8,7 @@ import (
 	"time"
 
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/filebrowser/filebrowser/v2/rules"
 )
 
 // Interface is implemented by storage
@@ -113,5 +114,101 @@ func TestSaveProvisionedAllowsSharedExplicitScope(t *testing.T) {
 
 	if len(back.users) != 2 {
 		t.Fatalf("%d users stored, want 2", len(back.users))
+	}
+}
+
+func (b *slowBackend) IncrementTokenVersion(uint) error { return nil }
+
+// versionBackend is a minimal backend that keeps users in memory so that token
+// version bumps can be observed without a real database.
+type versionBackend struct {
+	users map[uint]*User
+}
+
+func (b *versionBackend) GetBy(i interface{}) (*User, error) {
+	id, ok := i.(uint)
+	if !ok {
+		return nil, fberrors.ErrInvalidDataType
+	}
+	u, ok := b.users[id]
+	if !ok {
+		return nil, fberrors.ErrNotExist
+	}
+	return u, nil
+}
+
+func (b *versionBackend) GetByScope(string) (*User, error) { return nil, fberrors.ErrNotExist }
+
+func (b *versionBackend) Gets() ([]*User, error) {
+	out := make([]*User, 0, len(b.users))
+	for _, u := range b.users {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+func (b *versionBackend) Save(u *User) error {
+	if u.ID == 0 {
+		u.ID = uint(len(b.users) + 1)
+	}
+	saved := *u
+	b.users[u.ID] = &saved
+	return nil
+}
+
+func (b *versionBackend) Update(u *User, _ ...string) error {
+	saved := *u
+	b.users[u.ID] = &saved
+	return nil
+}
+
+func (b *versionBackend) DeleteByID(uint) error { return nil }
+
+func (b *versionBackend) DeleteByUsername(string) error { return nil }
+
+func (b *versionBackend) CountAdmins() (int, error) { return 0, nil }
+
+func (b *versionBackend) IncrementTokenVersion(id uint) error {
+	u, ok := b.users[id]
+	if !ok {
+		return fberrors.ErrNotExist
+	}
+	u.TokenVersion++
+	return nil
+}
+
+// A regex rule whose pattern text changes authorizes a different set of
+// paths, so it must revoke even when Path/Allow/Regex look identical.
+func TestRuleRegexpChangeRevokesToken(t *testing.T) {
+	back := &versionBackend{users: make(map[uint]*User)}
+	store := NewStorage(back)
+	u := &User{
+		Username: "alice",
+		Password: "pw",
+		Scope:    "/alice",
+		Rules:    []rules.Rule{{Regex: true, Allow: false, Path: "/x", Regexp: &rules.Regexp{Raw: "secret.*"}}},
+	}
+	if err := store.Save(u); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := *u
+	changed.Rules = []rules.Rule{{Regex: true, Allow: false, Path: "/x", Regexp: &rules.Regexp{Raw: "other.*"}}}
+	if err := store.Update(&changed); err != nil {
+		t.Fatal(err)
+	}
+	if got := back.users[u.ID].TokenVersion; got != 1 {
+		t.Fatalf("regex pattern change left the epoch at %d, want 1", got)
+	}
+
+	// Identical rules (including pattern text) must not revoke. Build from
+	// the post-update object, whose epoch was already refreshed by Update.
+	same := changed
+	same.Locale = "de"
+	if err := store.Update(&same); err != nil {
+		t.Fatal(err)
+	}
+	if got := back.users[u.ID].TokenVersion; got != 1 {
+		t.Fatalf("identical rules bumped the epoch to %d, want 1", got)
 	}
 }
