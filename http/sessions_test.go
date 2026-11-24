@@ -1,9 +1,11 @@
 package fbhttp
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -583,5 +585,113 @@ func TestPasswordResetRevokesToken(t *testing.T) {
 				t.Errorf("VULNERABLE: token survives %s change: %d", name, rec.Code)
 			}
 		})
+	}
+}
+
+// Brute-force protection: repeated failed logins from one peer are refused
+// with 429 instead of letting credential stuffing run unbounded.
+func TestLoginRateLimitBlocksAfterRepeatedFailures(t *testing.T) {
+	loginAttempts.reset()
+	t.Cleanup(loginAttempts.reset)
+
+	key := []byte("test-signing-key")
+	st, server := newSessionStore(t, users.Permissions{Download: true}, key)
+	if err := st.Settings.Save(&settings.Settings{Key: key, AuthMethod: fbAuth.MethodJSONAuth}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Auth.Save(&fbAuth.JSONAuth{}); err != nil {
+		t.Fatal(err)
+	}
+	login := handle(loginHandler(time.Hour), "", st, server)
+
+	badCreds := `{"username":"u","password":"wrong"}`
+	var last int
+	for i := 0; i < 11; i++ {
+		req, _ := http.NewRequest(http.MethodPost, "/login", strings.NewReader(badCreds))
+		req.RemoteAddr = "198.51.100.7:1234"
+		rec := httptest.NewRecorder()
+		login.ServeHTTP(rec, req)
+		last = rec.Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("11th consecutive failure returned %d; want 429", last)
+	}
+
+	// A different peer is unaffected.
+	req, _ := http.NewRequest(http.MethodPost, "/login", strings.NewReader(badCreds))
+	req.RemoteAddr = "198.51.100.8:1234"
+	rec := httptest.NewRecorder()
+	login.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("other peer returned %d; want 403", rec.Code)
+	}
+
+	// And the standard security headers ride along on every handled response.
+	for h, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+	} {
+		if got := rec.Header().Get(h); got != want {
+			t.Errorf("header %s = %q, want %q", h, got, want)
+		}
+	}
+}
+
+// Share-password guessing is bounded per share per peer: repeated wrong
+// passwords yield 429 instead of an unbounded bcrypt oracle.
+func TestSharePasswordRateLimitBlocksGuessing(t *testing.T) {
+	sharePasswordAttempts.reset()
+	t.Cleanup(sharePasswordAttempts.reset)
+
+	root := t.TempDir()
+	userScope := filepath.Join(root, "user")
+	if err := os.MkdirAll(userScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userScope, "file.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Share: true, Download: true}
+	st := scopedUserStorage(t, userScope, perm, key)
+	server := &settings.Server{Root: root}
+
+	body := `{"password":"ShareSecret123!","expires":"24","unit":"hours"}`
+	req, _ := http.NewRequest(http.MethodPost, "/file.txt", strings.NewReader(body))
+	req.Header.Set("X-Auth", signToken(t, perm, key))
+	rec := httptest.NewRecorder()
+	handle(sharePostHandler, "", st, server).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("share creation returned %d, body=%q", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	var last int
+	for i := 0; i < 11; i++ {
+		r, _ := http.NewRequest(http.MethodGet, "/api/public/dl/"+created.Hash+"/file.txt", http.NoBody)
+		r.Header.Set("X-SHARE-PASSWORD", url.QueryEscape("wrong-password"))
+		r.RemoteAddr = "203.0.113.9:1234"
+		w := httptest.NewRecorder()
+		handle(publicDlHandler, "/api/public/dl/", st, server).ServeHTTP(w, r)
+		last = w.Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("11th wrong password returned %d; want 429", last)
+	}
+
+	// The correct password still works from another peer.
+	r, _ := http.NewRequest(http.MethodGet, "/api/public/dl/"+created.Hash+"/file.txt", http.NoBody)
+	r.Header.Set("X-SHARE-PASSWORD", url.QueryEscape("ShareSecret123!"))
+	r.RemoteAddr = "203.0.113.10:1234"
+	w := httptest.NewRecorder()
+	handle(publicDlHandler, "/api/public/dl/", st, server).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("correct password from another peer returned %d; want 200", w.Code)
 	}
 }
