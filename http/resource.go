@@ -2,6 +2,8 @@ package fbhttp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -153,6 +155,9 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 			Checker:    d,
 		})
 		if err == nil {
+			if file.IsDir {
+				return http.StatusBadRequest, fmt.Errorf("cannot upload to a directory %s", r.URL.Path)
+			}
 			if r.URL.Query().Get("override") != "true" {
 				return http.StatusConflict, nil
 			}
@@ -166,6 +171,8 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 			if err != nil {
 				return errToStatus(err), err
 			}
+		} else if !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
+			return errToStatus(err), err
 		}
 
 		err = d.RunHook(func() error {
@@ -178,10 +185,6 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 			w.Header().Set("ETag", etag)
 			return nil
 		}, "upload", r.URL.Path, "", d.user)
-
-		if err != nil {
-			_ = d.user.Fs.RemoveAll(r.URL.Path)
-		}
 
 		return errToStatus(err), err
 	})
@@ -350,32 +353,73 @@ func writeFile(afs afero.Fs, dst string, in io.Reader, fileMode, dirMode fs.File
 		return nil, err
 	}
 
-	file, err := afs.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileMode)
+	// Overwriting must not silently reset the destination's mode: a rename
+	// replaces the inode, so the temp file takes the destination's existing
+	// permission bits (when the destination already exists) instead of the
+	// default. New files keep the configured fileMode.
+	mode := fileMode
+	if st, statErr := afs.Stat(dst); statErr == nil && !st.IsDir() {
+		mode = st.Mode().Perm()
+	}
+
+	tmp, tmpName, err := openTempFile(afs, dir, ".fb-upload-*", mode)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = tmp.Close()
+			_ = afs.Remove(tmpName)
+		}
+	}()
 
-	_, err = io.Copy(file, in)
+	if _, err := io.Copy(tmp, in); err != nil {
+		return nil, err
+	}
+	if err := tmp.Sync(); err != nil {
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := afs.Rename(tmpName, dst); err != nil {
+		return nil, err
+	}
+
+	info, err := afs.Stat(dst)
 	if err != nil {
 		return nil, err
 	}
-
-	// Sync the file to ensure all data is written to storage.
-	// to prevent file corruption.
-	if err := file.Sync(); err != nil {
-		return nil, err
-	}
-
-	// Gets the info about the file.
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-
+	cleanup = false
 	return info, nil
 }
 
+func openTempFile(afs afero.Fs, dir, pattern string, mode fs.FileMode) (afero.File, string, error) {
+	prefix, suffix := splitTempPattern(pattern)
+	var buf [16]byte
+	for i := 0; i < 10000; i++ {
+		if _, err := rand.Read(buf[:]); err != nil {
+			return nil, "", err
+		}
+		name := path.Join(dir, prefix+hex.EncodeToString(buf[:])+suffix)
+		f, err := afs.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, mode)
+		if err == nil {
+			return f, name, nil
+		}
+		if !errors.Is(err, os.ErrExist) && !errors.Is(err, fs.ErrExist) && !os.IsExist(err) {
+			return nil, "", err
+		}
+	}
+	return nil, "", fmt.Errorf("could not create temp file in %q", dir)
+}
+
+func splitTempPattern(pattern string) (prefix, suffix string) {
+	if idx := strings.LastIndex(pattern, "*"); idx >= 0 {
+		return pattern[:idx], pattern[idx+1:]
+	}
+	return pattern, ""
+}
 func delThumbs(ctx context.Context, fileCache FileCache, file *files.FileInfo) error {
 	for _, previewSizeName := range PreviewSizeNames() {
 		size, _ := ParsePreviewSize(previewSizeName)
