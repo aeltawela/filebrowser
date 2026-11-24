@@ -468,6 +468,10 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 		log.Println("WARNING: This feature has known security vulnerabilities and should not")
 		log.Println("WARNING: you fully understand the risks involved. For more information")
 		log.Println("WARNING: read https://github.com/filebrowser/filebrowser/issues/5199")
+		if set, err := st.Settings.Get(); err == nil && len(set.Shell) > 0 {
+			log.Println("WARNING: A shell is configured, but it is ignored: commands and hooks")
+			log.Println("WARNING: always run the parsed argv directly, never through a shell.")
+		}
 	}
 
 	if server.FollowExternalSymlinks {
