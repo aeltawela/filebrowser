@@ -93,6 +93,7 @@ func init() {
 	flags.String("cacheDir", "", "file cache directory (disabled if empty)")
 	flags.String("redisCacheUrl", "", "redis cache URL (for multi-instance deployments), e.g. redis://user:pass@host:port")
 	flags.Int("imageProcessors", 4, "image processors count")
+	flags.Bool("enableUnsafeExec", false, "acknowledge that command execution is equivalent to shell access and allow enabling it")
 	addServerFlags(flags)
 }
 
@@ -315,6 +316,22 @@ func warnIfVideoThumbnailsUnavailable(server *settings.Server, videoThumbService
 	}
 }
 
+// validateUnsafeExec refuses to enable the command runner unless the operator
+// has explicitly acknowledged that it grants shell-equivalent access. The
+// feature is disabled by default and the allowlist is not a security boundary:
+// a permitted program can execute other programs.
+func validateUnsafeExec(v *viper.Viper, server *settings.Server) error {
+	if server == nil || !server.EnableExec {
+		return nil
+	}
+
+	if !v.GetBool("enableUnsafeExec") {
+		return errors.New("command execution is disabled for safety: pass --enableUnsafeExec to acknowledge that allowed commands run with the server's privileges and can execute other programs")
+	}
+
+	return nil
+}
+
 // validateProxyAuthConfig is a startup gate: proxy authentication is only
 // safe when the identity header is anchored to a trusted source address or a
 // shared secret. The explicit allowUntrusted flag is the sole escape hatch.
@@ -427,6 +444,10 @@ func getServerSettings(v *viper.Viper, st *storage.Storage) (*settings.Server, e
 
 	if v.IsSet("disableExec") {
 		server.EnableExec = !v.GetBool("disableExec")
+	}
+
+	if err := validateUnsafeExec(v, server); err != nil {
+		return nil, err
 	}
 
 	if v.IsSet("followExternalSymlinks") {
