@@ -3,6 +3,7 @@ package fbhttp
 import (
 	"errors"
 	"os"
+	"sync"
 )
 
 // Named bounds for user-controlled input sizes (W3 hardening).
@@ -86,4 +87,42 @@ func isNonRegularFile(mode os.FileMode) bool {
 		mode&os.ModeDevice != 0 ||
 		mode&os.ModeCharDevice != 0 ||
 		mode&os.ModeIrregular != 0
+}
+
+// GHSA-4r8p-gqj2-mwgm — per-upload serialization for concurrent TUS PATCHes.
+//
+// The table holds one entry per in-flight PATCH/DELETE; each entry is removed
+// when its last holder unlocks, so the map is bounded by concurrent requests
+// and needs no separate eviction.
+type tusLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+var tusLocks = struct {
+	mu   sync.Mutex
+	held map[string]*tusLockEntry
+}{held: map[string]*tusLockEntry{}}
+
+// lockTUSUpload serializes handlers operating on the same upload. The caller
+// must call the returned function to release the lock.
+func lockTUSUpload(key string) func() {
+	tusLocks.mu.Lock()
+	e, ok := tusLocks.held[key]
+	if !ok {
+		e = &tusLockEntry{}
+		tusLocks.held[key] = e
+	}
+	e.refs++
+	tusLocks.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		tusLocks.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(tusLocks.held, key)
+		}
+		tusLocks.mu.Unlock()
+	}
 }

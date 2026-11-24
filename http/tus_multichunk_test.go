@@ -295,3 +295,57 @@ func TestTusOverLengthPatchKeepsConnectionUsable(t *testing.T) {
 		t.Fatal("connection was dropped by the over-length PATCH instead of being reused")
 	}
 }
+
+// A Create-only user can complete a TUS upload to a new path: writing the
+// upload body is the TUS equivalent of a Create-gated POST-new, so requiring
+// Modify on PATCH would strand legitimate create-only uploads. Overwriting an
+// existing file still requires Modify (enforced at override-POST time).
+func TestTUSCreateOnlyUserCanCompleteNewUpload(t *testing.T) {
+	root := t.TempDir()
+	userScope := filepath.Join(root, "user")
+	if err := os.MkdirAll(userScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Create: true, Download: true}
+	st := scopedUserStorage(t, userScope, perm, key)
+	cache := newMemoryUploadCache()
+	t.Cleanup(cache.Close)
+	srv := newTusTestServer(t, st, cache)
+	token := signToken(t, perm, key)
+
+	create, err := http.NewRequest(http.MethodPost, srv.URL+"/api/tus/new.bin", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create.Header.Set("X-Auth", token)
+	create.Header.Set("Upload-Length", "5")
+	res, err := srv.Client().Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("POST create = %d; want 201", res.StatusCode)
+	}
+
+	patch, err := http.NewRequest(http.MethodPatch, srv.URL+res.Header.Get("Location"), bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch.Header.Set("X-Auth", token)
+	patch.Header.Set("Content-Type", "application/offset+octet-stream")
+	patch.Header.Set("Upload-Offset", "0")
+	pres, err := srv.Client().Do(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pres.Body.Close()
+	if pres.StatusCode != http.StatusNoContent && pres.StatusCode != http.StatusOK && pres.StatusCode != 204 {
+		t.Fatalf("PATCH = %d; Create-only users must complete new uploads", pres.StatusCode)
+	}
+	if got, err := os.ReadFile(filepath.Join(userScope, "new.bin")); err != nil || string(got) != "hello" {
+		t.Fatalf("uploaded content = %q, err = %v", got, err)
+	}
+}
