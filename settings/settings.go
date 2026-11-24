@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/filebrowser/filebrowser/v2/rules"
+	"github.com/filebrowser/filebrowser/v2/users"
 )
 
 const DefaultUsersHomeBasePath = "/users"
@@ -21,8 +22,13 @@ type AuthMethod string
 
 // Settings contain the main settings of the application.
 type Settings struct {
-	Key                   []byte              `json:"key"`
-	Signup                bool                `json:"signup"`
+	Key    []byte `json:"key"`
+	Signup bool   `json:"signup"`
+	// SignupPermissions is the explicit opt-in for extra permissions granted to
+	// self-registered users. When nil, signup grants Download only; the default
+	// permission set is never inherited. Admin and Execute are always withheld
+	// by the signup handler, even if this block asks for them.
+	SignupPermissions     *users.Permissions  `json:"signupPermissions,omitempty"`
 	HideLoginButton       bool                `json:"hideLoginButton"`
 	CreateUserDir         bool                `json:"createUserDir"`
 	UserHomeBasePath      string              `json:"userHomeBasePath"`
