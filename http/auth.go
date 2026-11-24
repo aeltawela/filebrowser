@@ -167,7 +167,7 @@ func loginHandler(tokenExpireTime time.Duration) handleFunc {
 
 		user, err := auther.Auth(r, d.store.Users, d.settings, d.server)
 		switch {
-		case errors.Is(err, os.ErrPermission):
+		case errors.Is(err, os.ErrPermission), errors.Is(err, settings.ErrRootScope):
 			return http.StatusForbidden, nil
 		case err != nil:
 			return http.StatusInternalServerError, err
@@ -209,14 +209,18 @@ var signupHandler = func(w http.ResponseWriter, r *http.Request, d *data) (int, 
 
 	d.settings.Defaults.Apply(user)
 
-	// Users signed up via the signup handler should never become admins, even
-	// if that is the default permission.
-	user.Perm.Admin = false
-
-	// Self-registered users should not inherit execution capabilities from
-	// default settings, regardless of what the administrator has configured
-	// as the default. Execution rights must be explicitly granted by an admin.
-	user.Perm.Execute = false
+	// Self-registration is least-privilege by default: download only. The
+	// default permission set (which includes the destructive CRUD rights) is
+	// never inherited. An administrator can opt in to additional rights with
+	// the explicit SignupPermissions block, but Admin and Execute are always
+	// withheld here and must be granted through a separate admin action.
+	perms := users.Permissions{Download: true}
+	if d.settings.SignupPermissions != nil {
+		perms = *d.settings.SignupPermissions
+		perms.Admin = false
+		perms.Execute = false
+	}
+	user.Perm = perms
 	user.Commands = []string{}
 
 	pwd, err := users.ValidateAndHashPwd(info.Password, d.settings.MinimumPasswordLength)
@@ -227,6 +231,10 @@ var signupHandler = func(w http.ResponseWriter, r *http.Request, d *data) (int, 
 	user.Password = pwd
 
 	derivedScope, err := d.settings.CreateUserHome(user, d.server.Root, false)
+	if errors.Is(err, settings.ErrRootScope) {
+		log.Printf("configuration error: signup is enabled but no per-user scope can be derived; enable createUserDir or configure a non-root defaults.scope")
+		return http.StatusForbidden, nil
+	}
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
