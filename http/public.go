@@ -157,6 +157,12 @@ func authenticateShareRequest(r *http.Request, l *share.Link, key []byte) (int, 
 		return 0, nil
 	}
 
+	// Blunt share-password guessing: per-share, per-peer budget, then 429.
+	shareKey := clientIP(r) + "\x00" + l.Hash
+	if sharePasswordAttempts.blocked(shareKey) {
+		return http.StatusTooManyRequests, nil
+	}
+
 	password := r.Header.Get("X-SHARE-PASSWORD")
 	password, err := url.QueryUnescape(password)
 	if err != nil {
@@ -167,6 +173,7 @@ func authenticateShareRequest(r *http.Request, l *share.Link, key []byte) (int, 
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(l.PasswordHash), []byte(password)); err != nil {
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			sharePasswordAttempts.record(shareKey)
 			return http.StatusUnauthorized, nil
 		}
 		return 0, err
