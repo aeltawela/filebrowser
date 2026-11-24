@@ -1,7 +1,6 @@
 package fbhttp
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"net/url"
@@ -22,9 +21,16 @@ var withHashFile = func(fn handleFunc) handleFunc {
 			return errToStatus(err), err
 		}
 
-		status, err := authenticateShareRequest(r, link)
+		status, err := authenticateShareRequest(r, link, d.settings.Key)
 		if status != 0 || err != nil {
 			return status, err
+		}
+
+		// Only a request that just passed the password check (or presented a
+		// token issued by one) gets a fresh token for the download URL. The
+		// random token stored with the share is never a password bypass.
+		if link.PasswordHash != "" {
+			issueShareDownloadToken(d.settings.Key, link)
 		}
 
 		user, err := d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, link.UserID)
@@ -137,12 +143,16 @@ var publicDlHandler = withHashFile(func(w http.ResponseWriter, r *http.Request, 
 	return rawDirHandler(w, r, d, file)
 })
 
-func authenticateShareRequest(r *http.Request, l *share.Link) (int, error) {
+func authenticateShareRequest(r *http.Request, l *share.Link, key []byte) (int, error) {
 	if l.PasswordHash == "" {
 		return 0, nil
 	}
 
-	if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(l.Token)) == 1 {
+	// A token is accepted only when it was minted after a password check and
+	// still matches the share's password hash and expiry. Comparing it to the
+	// stored random token would let anyone holding the "Download Link" bypass
+	// the password (GHSA-3v48-283x-f2w4).
+	if verifyShareDownloadToken(r, l, key) {
 		return 0, nil
 	}
 
