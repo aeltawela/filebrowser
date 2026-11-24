@@ -32,7 +32,7 @@ export function parseToken(token: string) {
   const timeout = expiresAt.getTime() - Date.now();
   authStore.setLogoutTimer(
     setSafeTimeout(() => {
-      logout("inactivity");
+      void logout("inactivity");
     }, timeout)
   );
 }
@@ -115,7 +115,30 @@ export async function signup(username: string, password: string) {
   }
 }
 
-export function logout(reason?: string) {
+export async function logout(reason?: string) {
+  // Revoke the token server-side before discarding it. This is best-effort:
+  // the local session must still be cleared when the server is unreachable or
+  // the token has already expired (proxy auth with a custom logout page).
+  const jwt = localStorage.getItem("jwt");
+  if (jwt && !noAuth) {
+    // Bounded best-effort: the local session is cleared unconditionally
+    // below, so a hung server must not delay logout (inactivity timer,
+    // self-delete) indefinitely.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      await fetch(`${baseURL}/api/logout`, {
+        method: "POST",
+        headers: { "X-Auth": jwt },
+        signal: controller.signal,
+      });
+    } catch (e) {
+      console.warn("logout request failed", e);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   document.cookie = "auth=; Max-Age=0; Path=/; SameSite=Strict;";
 
   const authStore = useAuthStore();

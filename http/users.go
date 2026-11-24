@@ -151,6 +151,10 @@ var userPostHandler = withAdmin(func(w http.ResponseWriter, r *http.Request, d *
 		return http.StatusBadRequest, fberrors.ErrEmptyPassword
 	}
 
+	// Session epochs start at zero for every new account, regardless of what a
+	// client puts in the JSON payload.
+	req.Data.TokenVersion = 0
+
 	req.Data.Password, err = users.ValidateAndHashPwd(req.Data.Password, d.settings.MinimumPasswordLength)
 	if err != nil {
 		return http.StatusBadRequest, err
