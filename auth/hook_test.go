@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	fberrors "github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/settings"
 	"github.com/filebrowser/filebrowser/v2/users"
 )
@@ -153,4 +154,112 @@ func TestHookSaveUserRespectsExplicitScope(t *testing.T) {
 	if u.Scope != "/shared/team" {
 		t.Errorf("explicit hook scope should win, got %q", u.Scope)
 	}
+}
+
+// A hook-provisioned account must not silently inherit shell-equivalent
+// rights from permissive defaults: Admin and Execute (and the command list)
+// require an explicit hook statement, mirroring signup and proxy
+// auto-provisioning.
+func TestHookProvisionStripsDefaultAdmin(t *testing.T) {
+	back := &hookTestBackend{users: make(map[uint]*users.User)}
+	store := users.NewStorage(back)
+	serverRoot := t.TempDir()
+
+	newHook := func(outputs map[string]string) *HookAuth {
+		values := map[string]string{"hook.action": "auth"}
+		for k, v := range outputs {
+			values[k] = v
+		}
+		return &HookAuth{
+			Users: store,
+			Settings: &settings.Settings{
+				MinimumPasswordLength: settings.DefaultMinimumPasswordLength,
+				Defaults: settings.UserDefaults{
+					Scope:    "/team",
+					Perm:     users.Permissions{Admin: true, Execute: true},
+					Commands: []string{"danger"},
+				},
+			},
+			Server: &settings.Server{Root: serverRoot},
+			Cred:   hookCred{Username: "hookuser", Password: "HookPass123!"},
+			Fields: hookFields{Values: values},
+		}
+	}
+
+	u, err := newHook(nil).SaveUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Perm.Admin || u.Perm.Execute {
+		t.Fatalf("VULNERABLE: hook-provisioned user inherited admin=%t execute=%t from defaults", u.Perm.Admin, u.Perm.Execute)
+	}
+	if len(u.Commands) != 0 {
+		t.Fatalf("hook-provisioned user inherited commands %q from defaults", u.Commands)
+	}
+
+	explicit, err := newHook(map[string]string{"user.perm.admin": "true"}).SaveUser()
+	if err != nil {
+		// Second provisioning updates the existing user; the explicit grant
+		// must survive.
+		t.Fatal(err)
+	}
+	if !explicit.Perm.Admin {
+		t.Fatal("explicit user.perm.admin=true was stripped")
+	}
+}
+
+type hookTestBackend struct {
+	users map[uint]*users.User
+	next  uint
+}
+
+func (b *hookTestBackend) GetBy(i interface{}) (*users.User, error) {
+	id, ok := i.(uint)
+	if !ok {
+		if name, ok := i.(string); ok {
+			for _, u := range b.users {
+				if u.Username == name {
+					cp := *u
+					return &cp, nil
+				}
+			}
+		}
+		return nil, fberrors.ErrNotExist
+	}
+	u, ok := b.users[id]
+	if !ok {
+		return nil, fberrors.ErrNotExist
+	}
+	cp := *u
+	return &cp, nil
+}
+func (b *hookTestBackend) GetByScope(string) (*users.User, error) { return nil, fberrors.ErrNotExist }
+func (b *hookTestBackend) Gets() ([]*users.User, error) {
+	out := make([]*users.User, 0, len(b.users))
+	for _, u := range b.users {
+		cp := *u
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+func (b *hookTestBackend) Save(u *users.User) error {
+	if u.ID == 0 {
+		b.next++
+		u.ID = b.next
+	}
+	cp := *u
+	b.users[u.ID] = &cp
+	return nil
+}
+func (b *hookTestBackend) Update(u *users.User, _ ...string) error { return b.Save(u) }
+func (b *hookTestBackend) DeleteByID(uint) error                   { return nil }
+func (b *hookTestBackend) DeleteByUsername(string) error           { return nil }
+func (b *hookTestBackend) CountAdmins() (int, error)               { return 0, nil }
+func (b *hookTestBackend) IncrementTokenVersion(id uint) error {
+	u, ok := b.users[id]
+	if !ok {
+		return fberrors.ErrNotExist
+	}
+	u.TokenVersion++
+	return nil
 }
