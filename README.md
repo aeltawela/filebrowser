@@ -61,6 +61,7 @@ feature development:
 | HTML preview | Opt-in full HTML file previews served through a sandboxed preview endpoint. |
 | Performance | Reduced unnecessary file metadata and preview work in hot browsing paths. |
 | Tooling | Refreshed Go and frontend dependencies, with the frontend on Vue, Vite, TypeScript, and pnpm. |
+| Security | Fixes for the advisories upstream left unpatched: safe provisioning, trusted proxy auth, revocable sessions, share-link lifecycle, symlink-aware rules, safe uploads, bounded inputs, and a double-opt-in command runner. See [`docs/security/`](docs/security/). |
 
 ## Core Features
 
@@ -102,19 +103,29 @@ npx -y pnpm@10.33.4 install --frozen-lockfile
 
 ## Security
 
-Published advisories are listed under [security advisories](https://github.com/filebrowser/filebrowser/security/advisories),
-and reporting instructions are in [SECURITY.md](SECURITY.md). Two known issue classes
-remain unaddressed and will not be fixed:
+This fork fixes the published advisories that upstream left unpatched before
+archiving: provisioning and scope, proxy-header trust, session revocation,
+share-link lifecycle, path and upload authorization, bounded inputs, and the
+command runner. The fix plan, per-advisory status, and regression tests are in
+[`docs/security/`](docs/security/); reporting instructions are in
+[SECURITY.md](SECURITY.md).
 
-- **Command execution, runner, and hooks.** This feature is plagued with vulnerabilities across many published advisories, and would need a full rewrite to be made safe. It is disabled by default; if you re-enable it with `--disable-exec=false`, treat the ability to run commands as equivalent to shell access on the host. Background: [#5199](https://github.com/filebrowser/filebrowser/issues/5199).
-- **Session and JWT handling.** Sessions are self-contained JWTs rather than server-side identifiers, so they cannot be revoked, which means that logout, password changes, and renewal leave previously issued tokens valid until they expire, and the same refresh token can be redeemed repeatedly. Assume a leaked token is valid until expiry. Background: [#5216](https://github.com/filebrowser/filebrowser/issues/5216).
+One issue class is **accepted, not fixed**:
 
-The original upstream project recommends these safeguards, which also apply to
-this fork:
+- **Command execution, runner, and hooks.** The allowlist cannot be made safe: a permitted program can execute other programs. The feature is disabled by default and enabling it requires two explicit opt-ins (`--disableExec=false` and `--enableUnsafeExec`). Treat it as equivalent to shell access on the host. Background: [#5199](https://github.com/filebrowser/filebrowser/issues/5199) and [`docs/command-execution.md`](docs/command-execution.md).
+
+Sessions are revocable server-side: logout, password changes, permission
+changes, and account locking invalidate previously issued tokens immediately.
+Tokens are still self-contained JWTs, so keep expiration times short and treat
+a leaked token as valid until it expires or is revoked.
+
+The original upstream project recommends these safeguards, which remain
+mandatory for this fork:
 
 - **Do not expose it directly to the internet.** Put it behind a reverse proxy that terminates TLS and performs its own authentication.
 - **Keep the command runner disabled.** It is off by default, so leave it off. See [#5199](https://github.com/filebrowser/filebrowser/issues/5199) and [`docs/command-execution.md`](docs/command-execution.md).
 - **Run it unprivileged, inside a container**, with only the directory you intend to serve mounted into it.
+- **Set a memory limit and a restart policy** on the container; bounds make exhaustion expensive, not impossible.
 
 ## Documentation
 

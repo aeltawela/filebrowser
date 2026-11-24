@@ -1,14 +1,22 @@
 ## Self-Registration (Signup)
 
-File Browser allows you to enable user self-registration (signup). This can be enabled via **Settings → Global Settings**, or with `filebrowser config set --signup`. Self-registered users inherit the configured **user defaults**, including the scope.
+File Browser allows you to enable user self-registration (signup). This can be enabled via **Settings → Global Settings**, or with `filebrowser config set --signup`.
 
-> [!WARNING]
+Self-registered users get **download-only** permissions by default; the
+configured user defaults are not inherited. Additional rights require the
+explicit `signupPermissions` settings block (see
+[authentication](authentication.md#self-registration-permissions)).
+
+Signup requires a derivable scope. Either:
+
+a. Enable `createUserDir` so each user gets their own directory; or
+b. If users are meant to share files, set the default scope to something other than the root.
+
+> [!IMPORTANT]
 >
-> By default, the user scope is the server's root, so a self-registered user could read,
-> modify, and delete every file File Browser serves. To prevent this, either:
->
-> a. Enable `createUserDir` so each user gets their own directory; or
-> b. If users are meant to share files, set the default scope to something other than the root.
+> With signup enabled and neither of the above configured, the server refuses
+> to start, and the signup endpoint returns `403`. A self-registered user can
+> never be provisioned with the server root as their scope.
 
 ## Fail2ban
 
