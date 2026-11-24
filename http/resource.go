@@ -109,11 +109,6 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 			return errToStatus(err), err
 		}
 
-		err = d.store.Share.DeleteWithPathPrefix(file.Path, d.user.ID)
-		if err != nil {
-			log.Printf("WARNING: Error(s) occurred while deleting associated shares with file: %s", err)
-		}
-
 		// delete thumbnails
 		err = delThumbs(r.Context(), fileCache, file)
 		if err != nil {
@@ -395,6 +390,15 @@ func writeFile(afs afero.Fs, dst string, in io.Reader, fileMode, dirMode fs.File
 	return info, nil
 }
 
+// dropShares removes the share links invalidated by a path change. It runs after
+// the filesystem operation succeeded, so a cleanup failure is logged instead of
+// turning a completed rename or delete into an error response.
+func dropShares(d *data, path string) {
+	if err := d.store.Share.DeleteByPathPrefix(path); err != nil {
+		log.Printf("WARNING: Error(s) occurred while deleting shares for %s: %s", path, err)
+	}
+}
+
 func openTempFile(afs afero.Fs, dir, pattern string, mode fs.FileMode) (afero.File, string, error) {
 	prefix, suffix := splitTempPattern(pattern)
 	var buf [16]byte
@@ -438,7 +442,14 @@ func patchAction(ctx context.Context, action, src, dst string, d *data, fileCach
 			return fberrors.ErrPermissionDenied
 		}
 
-		return fileutils.Copy(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
+		if err := fileutils.Copy(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode); err != nil {
+			return err
+		}
+
+		// A copy that overwrites the destination changes what an existing link
+		// at that path serves.
+		dropShares(d, dst)
+		return nil
 	case "rename":
 		if !d.user.Perm.Rename {
 			return fberrors.ErrPermissionDenied
@@ -464,7 +475,16 @@ func patchAction(ctx context.Context, action, src, dst string, d *data, fileCach
 			return err
 		}
 
-		return fileutils.MoveFile(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
+		if err := fileutils.MoveFile(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode); err != nil {
+			return err
+		}
+
+		// A moved file must not inherit an old public link. Purge the source
+		// path (and any descendant links) and the destination, which may have
+		// been overwritten by the move.
+		dropShares(d, src)
+		dropShares(d, dst)
+		return nil
 	default:
 		return fmt.Errorf("unsupported action %s: %w", action, fberrors.ErrInvalidRequestParams)
 	}
