@@ -1,7 +1,10 @@
 package fbhttp
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -248,4 +251,54 @@ func getSharePasswordHash(body share.CreateBody) (data []byte, statuscode int, e
 	}
 
 	return hash, 0, nil
+}
+
+// The direct-download token is a short-lived capability that is only minted
+// after the share password has been verified. It is bound to the share's
+// current password hash and expiry, so protecting a previously unprotected
+// link, changing the password, or changing the expiry invalidates every token
+// issued before that change. The random value stored in Link.Token is kept for
+// backwards compatibility with existing databases but is never accepted as a
+// bearer credential for a password-protected share.
+const shareTokenValidity = time.Hour
+
+func shareDownloadToken(key []byte, l *share.Link, issuedAt int64) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(l.Hash))
+	mac.Write([]byte{0})
+	mac.Write([]byte(l.PasswordHash))
+	mac.Write([]byte{0})
+	mac.Write(strconv.AppendInt(nil, l.Expire, 10))
+	mac.Write([]byte{0})
+	mac.Write(strconv.AppendInt(nil, issuedAt, 10))
+	return base64.URLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// issueShareDownloadToken sets a fresh token on the in-memory link used to
+// build the response. It is deliberately not persisted: the next request
+// re-reads the link and must present the password (or an already-issued token)
+// to obtain another one.
+func issueShareDownloadToken(key []byte, l *share.Link) string {
+	issuedAt := time.Now().Unix()
+	l.Token = strconv.FormatInt(issuedAt, 10) + "." + shareDownloadToken(key, l, issuedAt)
+	return l.Token
+}
+
+func verifyShareDownloadToken(r *http.Request, l *share.Link, key []byte) bool {
+	issuedAtText, mac, ok := strings.Cut(r.URL.Query().Get("token"), ".")
+	if !ok {
+		return false
+	}
+	issuedAt, err := strconv.ParseInt(issuedAtText, 10, 64)
+	if err != nil {
+		return false
+	}
+
+	now := time.Now().Unix()
+	if issuedAt > now+60 || now-issuedAt > int64(shareTokenValidity/time.Second) {
+		return false
+	}
+
+	expected := shareDownloadToken(key, l, issuedAt)
+	return subtle.ConstantTimeCompare([]byte(mac), []byte(expected)) == 1
 }

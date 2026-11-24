@@ -42,12 +42,15 @@ func TestPublicShareHandlerAuthentication(t *testing.T) {
 			downloadPerm:       true,
 			expectedStatusCode: 401,
 		},
-		"Private share, authentication via token": {
+		// The stored random token is not a bearer credential for a protected
+		// share (GHSA-3v48-283x-f2w4); only a token issued after a password
+		// check is accepted.
+		"Private share, stored download token is not a password bypass": {
 			share:              &share.Link{Hash: "h", UserID: 1, PasswordHash: passwordBcrypt, Token: "123"},
 			req:                newHTTPRequest(t, func(r *http.Request) { r.URL.RawQuery = "token=123" }),
 			sharePerm:          true,
 			downloadPerm:       true,
-			expectedStatusCode: 200,
+			expectedStatusCode: 401,
 		},
 		"Private share, authentication via invalid token, 401": {
 			share:              &share.Link{Hash: "h", UserID: 1, PasswordHash: passwordBcrypt, Token: "123"},
