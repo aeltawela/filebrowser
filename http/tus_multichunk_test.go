@@ -2,6 +2,7 @@ package fbhttp
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -381,5 +382,62 @@ func TestTUSNegativeLengthDoesNotTruncate(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(userScope, "keep.bin")); err != nil || string(got) != "precious" {
 		t.Fatalf("VULNERABLE: existing file was truncated before the rejection: %q, %v", got, err)
+	}
+}
+
+// Aborting a TUS upload must purge shares like a regular delete: a surviving
+// link would serve whatever file later appears at that path.
+func TestTUSDeletePurgesShares(t *testing.T) {
+	root := t.TempDir()
+	userScope := filepath.Join(root, "user")
+	if err := os.MkdirAll(userScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Create: true, Modify: true, Delete: true, Download: true, Share: true}
+	st := scopedUserStorage(t, userScope, perm, key)
+	cache := newMemoryUploadCache()
+	t.Cleanup(cache.Close)
+	token := signToken(t, perm, key)
+
+	// Create the upload through the real POST handler.
+	post := handle(tusPostHandler(cache), "/api/tus", st, &settings.Server{})
+	req, _ := http.NewRequest(http.MethodPost, "/abort.bin", strings.NewReader(""))
+	req.Header.Set("X-Auth", token)
+	req.Header.Set("Upload-Length", "5")
+	rec := httptest.NewRecorder()
+	post.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST create = %d, body=%q; want 201", rec.Code, rec.Body.String())
+	}
+
+	// Share the (partial) upload path through the real share handler.
+	shareReq, _ := http.NewRequest(http.MethodPost, "/abort.bin", strings.NewReader(`{"password":"","expires":"","unit":""}`))
+	shareReq.Header.Set("X-Auth", token)
+	shareReq.Header.Set("Content-Type", "application/json")
+	shareRec := httptest.NewRecorder()
+	handle(sharePostHandler, "", st, &settings.Server{}).ServeHTTP(shareRec, shareReq)
+	if shareRec.Code != http.StatusOK {
+		t.Fatalf("share create = %d, body=%q; want 200", shareRec.Code, shareRec.Body.String())
+	}
+	var created struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(shareRec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// Abort the upload through the real DELETE handler.
+	del := handle(tusDeleteHandler(cache), "/api/tus", st, &settings.Server{})
+	delReq, _ := http.NewRequest(http.MethodDelete, "/abort.bin", http.NoBody)
+	delReq.Header.Set("X-Auth", token)
+	delRec := httptest.NewRecorder()
+	del.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d, body=%q; want 204", delRec.Code, delRec.Body.String())
+	}
+	if _, err := st.Share.GetByHash(created.Hash); err == nil {
+		t.Fatal("VULNERABLE: share survived the TUS abort and can serve a future file")
 	}
 }

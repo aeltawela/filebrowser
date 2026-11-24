@@ -348,12 +348,21 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 			return http.StatusNotFound, err
 		}
 
-		err = d.user.Fs.RemoveAll(r.URL.Path)
+		err = d.RunHook(func() error {
+			if err := d.user.Fs.RemoveAll(r.URL.Path); err != nil {
+				return err
+			}
+			cache.Complete(file.RealPath())
+			return nil
+		}, "delete", r.URL.Path, "", d.user)
 		if err != nil {
 			return errToStatus(err), err
 		}
 
-		cache.Complete(file.RealPath())
+		// Like the regular delete path, an aborted upload invalidates every
+		// share pointing at it: a surviving link would serve whatever file
+		// later appears at that path.
+		dropShares(d, file.Path)
 
 		return http.StatusNoContent, nil
 	})
